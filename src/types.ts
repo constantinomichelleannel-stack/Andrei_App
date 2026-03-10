@@ -11,7 +11,10 @@ export interface LegalDocument {
   filename: string;
   title: string;
   type: 'case' | 'statute' | 'memo';
+  citation?: string;
   summary: string;
+  size?: number;
+  status?: 'processing' | 'completed' | 'failed';
   uploaded_at: string;
   tags?: string[];
 }

@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import Fuse from 'fuse.js';
 import { 
   LayoutDashboard, 
   Search, 
@@ -21,6 +22,7 @@ import {
   Bot,
   Database,
   Share2,
+  Activity,
   Upload,
   Download,
   Eye,
@@ -179,8 +181,10 @@ const DocumentLibrary = () => {
   const [loading, setLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [title, setTitle] = useState('');
+  const [citation, setCitation] = useState('');
   const [type, setType] = useState<'case' | 'statute' | 'memo'>('case');
   const [tags, setTags] = useState('');
+  const [manualSummary, setManualSummary] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [filter, setFilter] = useState<'all' | 'case' | 'statute' | 'memo'>('all');
   const [previewDoc, setPreviewDoc] = useState<LegalDocument | null>(null);
@@ -190,6 +194,8 @@ const DocumentLibrary = () => {
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [sizeFilter, setSizeFilter] = useState<'all' | 'small' | 'medium' | 'large'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'processing' | 'failed'>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
   const fetchDocuments = async () => {
@@ -259,9 +265,12 @@ const DocumentLibrary = () => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('title', title);
+    formData.append('citation', citation);
     formData.append('type', type);
     formData.append('tags', tags);
-    if (generatedSummary) {
+    if (manualSummary.trim()) {
+      formData.append('summary', manualSummary);
+    } else if (generatedSummary) {
       formData.append('summary', generatedSummary);
     }
 
@@ -272,7 +281,9 @@ const DocumentLibrary = () => {
       });
       if (res.ok) {
         setTitle('');
+        setCitation('');
         setTags('');
+        setManualSummary('');
         setFile(null);
         fetchDocuments();
       }
@@ -288,7 +299,7 @@ const DocumentLibrary = () => {
     setPreviewContent(null);
     
     const ext = doc.filename.split('.').pop()?.toLowerCase();
-    if (ext && ['txt', 'md', 'csv', 'json', 'html'].includes(ext)) {
+    if (ext && ['txt', 'md', 'csv', 'json', 'html', 'pdf', 'docx'].includes(ext)) {
       setIsPreviewLoading(true);
       try {
         const res = await fetch(`/api/documents/preview/${doc.filename}`);
@@ -354,21 +365,47 @@ const DocumentLibrary = () => {
     });
   };
 
-  const filteredDocuments = documents.filter(doc => {
-    const matchesType = filter === 'all' || doc.type === filter;
-    
-    const docDate = new Date(doc.uploaded_at);
-    const matchesStartDate = !startDate || docDate >= new Date(startDate);
-    const matchesEndDate = !endDate || docDate <= new Date(endDate + 'T23:59:59');
+  const highlightText = (text: string, query: string) => {
+    if (!query.trim()) return text;
+    const parts = text.split(new RegExp(`(${query})`, 'gi'));
+    return parts.map((part, i) => 
+      part.toLowerCase() === query.toLowerCase() ? 
+        <span key={i} className="bg-yellow-200 text-slate-900 rounded-sm px-0.5">{part}</span> : 
+        part
+    );
+  };
 
-    const searchLower = searchQuery.toLowerCase();
-    const matchesSearch = !searchQuery || 
-      doc.title.toLowerCase().includes(searchLower) || 
-      doc.summary.toLowerCase().includes(searchLower) ||
-      (doc.tags && doc.tags.some(tag => tag.toLowerCase().includes(searchLower)));
-    
-    return matchesType && matchesStartDate && matchesEndDate && matchesSearch;
-  });
+  const fuse = useMemo(() => {
+    return new Fuse(documents, {
+      keys: ['title', 'summary', 'tags', 'citation'],
+      threshold: 0.4, // Adjust for fuzziness
+    });
+  }, [documents]);
+
+  const filteredDocuments = useMemo(() => {
+    let results = documents;
+
+    if (searchQuery.trim()) {
+      results = fuse.search(searchQuery).map(result => result.item);
+    }
+
+    return results.filter(doc => {
+      const matchesType = filter === 'all' || doc.type === filter;
+      
+      const docDate = new Date(doc.uploaded_at);
+      const matchesStartDate = !startDate || docDate >= new Date(startDate);
+      const matchesEndDate = !endDate || docDate <= new Date(endDate + 'T23:59:59');
+      
+      const matchesStatus = statusFilter === 'all' || doc.status === statusFilter;
+
+      let matchesSize = true;
+      if (sizeFilter === 'small') matchesSize = (doc.size || 0) < 1024 * 1024; // < 1MB
+      else if (sizeFilter === 'medium') matchesSize = (doc.size || 0) >= 1024 * 1024 && (doc.size || 0) < 10 * 1024 * 1024; // 1MB - 10MB
+      else if (sizeFilter === 'large') matchesSize = (doc.size || 0) >= 10 * 1024 * 1024; // > 10MB
+      
+      return matchesType && matchesStartDate && matchesEndDate && matchesStatus && matchesSize;
+    });
+  }, [documents, searchQuery, filter, startDate, endDate, sizeFilter, statusFilter, fuse]);
 
   return (
     <div className="space-y-8">
@@ -398,6 +435,16 @@ const DocumentLibrary = () => {
                 />
               </div>
               <div>
+                <label className="text-xs font-mono text-slate-400 uppercase">Citation (e.g., G.R. No., R.A. No.)</label>
+                <input 
+                  type="text" 
+                  value={citation}
+                  onChange={(e) => setCitation(e.target.value)}
+                  placeholder="e.g., G.R. No. 245123"
+                  className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900"
+                />
+              </div>
+              <div>
                 <label className="text-xs font-mono text-slate-400 uppercase">Document Type</label>
                 <select 
                   value={type}
@@ -420,9 +467,20 @@ const DocumentLibrary = () => {
                 />
               </div>
               <div>
+                <label className="text-xs font-mono text-slate-400 uppercase">AI Summary (Optional)</label>
+                <textarea 
+                  value={manualSummary}
+                  onChange={(e) => setManualSummary(e.target.value)}
+                  placeholder="Provide a brief summary or key takeaways..."
+                  className="w-full p-2 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-900 text-sm h-24 resize-none"
+                />
+                <p className="text-[10px] text-slate-400 mt-1 italic">If left blank, LexPH will attempt to auto-generate a summary.</p>
+              </div>
+              <div>
                 <label className="text-xs font-mono text-slate-400 uppercase">File</label>
                 <input 
                   type="file" 
+                  accept=".txt,.md,.csv,.json,.html,.pdf,.docx"
                   onChange={(e) => setFile(e.target.files?.[0] || null)}
                   className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-slate-900 file:text-white hover:file:bg-slate-800"
                   required
@@ -502,6 +560,34 @@ const DocumentLibrary = () => {
                       </button>
                     )}
                   </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Database size={14} className="text-slate-400" />
+                  <select 
+                    value={sizeFilter}
+                    onChange={(e) => setSizeFilter(e.target.value as any)}
+                    className="text-xs font-medium bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  >
+                    <option value="all">All Sizes</option>
+                    <option value="small">&lt; 1MB</option>
+                    <option value="medium">1MB - 10MB</option>
+                    <option value="large">&gt; 10MB</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Activity size={14} className="text-slate-400" />
+                  <select 
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value as any)}
+                    className="text-xs font-medium bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  >
+                    <option value="all">All Status</option>
+                    <option value="completed">Completed</option>
+                    <option value="processing">Processing</option>
+                    <option value="failed">Failed</option>
+                  </select>
                 </div>
               </div>
             </div>
@@ -601,12 +687,19 @@ const DocumentLibrary = () => {
                         <FileText size={20} />
                       </div>
                       <div>
-                        <h4 className="font-bold text-slate-900">{doc.title}</h4>
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-bold text-slate-900">{highlightText(doc.title, searchQuery)}</h4>
+                          {doc.citation && (
+                            <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200">
+                              {highlightText(doc.citation, searchQuery)}
+                            </span>
+                          )}
+                        </div>
                         {doc.tags && doc.tags.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-1 mb-1">
                             {doc.tags.map((tag, idx) => (
                               <span key={idx} className="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded-full font-medium">
-                                {tag.trim()}
+                                {highlightText(tag.trim(), searchQuery)}
                               </span>
                             ))}
                           </div>
@@ -615,10 +708,31 @@ const DocumentLibrary = () => {
                           <span className="uppercase font-mono">{doc.type}</span>
                           <span>•</span>
                           <span>{new Date(doc.uploaded_at).toLocaleDateString()}</span>
+                          {doc.size && (
+                            <>
+                              <span>•</span>
+                              <span>{(doc.size / 1024).toFixed(1)} KB</span>
+                            </>
+                          )}
+                          {doc.status && (
+                            <>
+                              <span>•</span>
+                              <span className={`flex items-center gap-1 ${
+                                doc.status === 'completed' ? 'text-emerald-600' :
+                                doc.status === 'processing' ? 'text-amber-600' :
+                                'text-red-600'
+                              }`}>
+                                {doc.status === 'completed' ? <CheckCircle2 size={10} /> : 
+                                 doc.status === 'processing' ? <Clock size={10} /> : 
+                                 <ShieldAlert size={10} />}
+                                {doc.status}
+                              </span>
+                            </>
+                          )}
                         </div>
                         {doc.summary && (
                           <p className="text-xs text-slate-400 line-clamp-2 max-w-md italic">
-                            {doc.summary}
+                            {highlightText(doc.summary, searchQuery)}
                           </p>
                         )}
                       </div>
@@ -667,7 +781,14 @@ const DocumentLibrary = () => {
                     <FileText size={24} />
                   </div>
                   <div>
-                    <h3 className="text-xl font-serif font-bold text-slate-900">{previewDoc.title}</h3>
+                    <div className="flex items-center gap-3">
+                      <h3 className="text-xl font-serif font-bold text-slate-900">{previewDoc.title}</h3>
+                      {previewDoc.citation && (
+                        <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-1 rounded border border-slate-200">
+                          {previewDoc.citation}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-slate-500 uppercase font-mono tracking-wider">
                       {previewDoc.type} • {new Date(previewDoc.uploaded_at).toLocaleDateString()}
                     </p>
@@ -700,7 +821,7 @@ const DocumentLibrary = () => {
                         <ShieldAlert size={18} /> Preview Limited
                       </h4>
                       <p className="text-sm text-amber-700">
-                        Full text preview is only available for text-based documents (.txt, .md, .csv, .json). 
+                        Full text preview is only available for supported documents (.txt, .md, .csv, .json, .pdf, .docx). 
                         For other file types, please download the document to view its contents.
                       </p>
                     </div>
@@ -746,9 +867,10 @@ const ResearchAssistant = () => {
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
   const [sources, setSources] = useState<{title: string, uri: string}[]>([]);
   const [copiedIndex, setCopiedIndex] = useState<string | null>(null);
-  const [researchMode, setResearchMode] = useState<'memo' | 'statute' | 'case' | 'article'>('memo');
+  const [researchMode, setResearchMode] = useState<'memo' | 'statute' | 'case' | 'article' | 'summarizer'>('memo');
   const [history, setHistory] = useState<{query: string, timestamp: string}[]>([]);
   const [isSaving, setIsSaving] = useState<string | null>(null);
+  const [savedIds, setSavedIds] = useState<string[]>([]);
 
   const suggestedQueries = {
     memo: [
@@ -770,6 +892,11 @@ const ResearchAssistant = () => {
       "Legal analysis of the Maharlika Investment Fund",
       "Impact of the Anti-Terror Law on civil liberties",
       "Developments in Philippine Cybercrime Law"
+    ],
+    summarizer: [
+      "Summarize Estrada vs. Desierto (G.R. No. 146710)",
+      "Provide a case brief for People vs. Genosa",
+      "Analyze the ruling in Falcis vs. Civil Registrar General"
     ]
   };
 
@@ -799,7 +926,8 @@ const ResearchAssistant = () => {
       memo: ["Analyzing legal issues...", "Searching Jurisprudence...", "Identifying Statutes...", "Synthesizing Memorandum...", "Finalizing Citations..."],
       statute: ["Searching Statutes...", "Identifying Relevant Articles...", "Checking Amendments...", "Cross-referencing Laws...", "Finalizing Citations..."],
       case: ["Searching Jurisprudence...", "Identifying Key Rulings...", "Analyzing Precedents...", "Checking Case Status...", "Finalizing Citations..."],
-      article: ["Searching Legal Journals...", "Retrieving Scholarly Articles...", "Analyzing Legal Commentary...", "Synthesizing Perspectives...", "Finalizing References..."]
+      article: ["Searching Legal Journals...", "Retrieving Scholarly Articles...", "Analyzing Legal Commentary...", "Synthesizing Perspectives...", "Finalizing References..."],
+      summarizer: ["Reading Case Text...", "Identifying Facts...", "Extracting Issues...", "Analyzing Ruling...", "Synthesizing Legal Analysis..."]
     };
 
     const activeStatuses = statuses[researchMode];
@@ -835,6 +963,8 @@ const ResearchAssistant = () => {
         systemPrompt += " Focus on finding relevant Supreme Court cases and legal precedents. Provide G.R. Numbers, dates, and detailed summaries of the rulings. Use SCRA or Philippine Reports citations where available.";
       } else if (researchMode === 'article') {
         systemPrompt += " Focus on retrieving and analyzing legal articles, scholarly journals, and expert commentaries. Provide a synthesis of different legal perspectives on the topic.";
+      } else if (researchMode === 'summarizer') {
+        systemPrompt += " You are a Case Summarizer. Your task is to provide a highly structured and precise summary of the provided case text or citation. You MUST include the following sections: 1. Case Title & Citation, 2. Facts (concise narrative), 3. Issues (legal questions addressed), 4. Ruling (the court's decision), and 5. Legal Analysis (the rationale and principles applied). Use professional legal terminology.";
       }
 
       const response = await ai.models.generateContent({
@@ -908,7 +1038,7 @@ const ResearchAssistant = () => {
       });
 
       if (res.ok) {
-        // Show success
+        setSavedIds(prev => [...prev, id]);
       }
     } catch (err) {
       console.error(err);
@@ -950,6 +1080,12 @@ const ResearchAssistant = () => {
             >
               Articles
             </button>
+            <button 
+              onClick={() => setResearchMode('summarizer')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${researchMode === 'summarizer' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              Summarizer
+            </button>
           </div>
           <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-bold border border-emerald-100">
             <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
@@ -967,7 +1103,7 @@ const ResearchAssistant = () => {
             </div>
             <div className="text-center max-w-md space-y-4">
               <h2 className="text-xl font-serif text-slate-600">How can I assist your research?</h2>
-              <p className="text-sm leading-relaxed">Describe a legal problem or ask for specific jurisprudence. I will analyze the issues, search relevant laws, and draft a memorandum.</p>
+              <p className="text-sm leading-relaxed">Describe a legal problem, ask for specific jurisprudence, or provide a case for summarization. I will analyze issues, search laws, and generate structured summaries.</p>
               
               <div className="pt-4">
                 <p className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-3">Suggested Topics</p>
@@ -1033,10 +1169,11 @@ const ResearchAssistant = () => {
                   </button>
                   <button 
                     onClick={() => handleSaveToRepository(msg.content, msg.id)}
-                    className={`p-1.5 bg-slate-50 text-slate-400 rounded-lg hover:text-emerald-600 hover:bg-emerald-50 transition-all ${isSaving === msg.id ? 'animate-pulse' : ''}`}
-                    title="Save to Repository"
+                    className={`p-1.5 bg-slate-50 text-slate-400 rounded-lg hover:text-emerald-600 hover:bg-emerald-50 transition-all ${isSaving === msg.id ? 'animate-pulse' : ''} ${savedIds.includes(msg.id) ? 'text-emerald-600 bg-emerald-50' : ''}`}
+                    title={savedIds.includes(msg.id) ? "Saved to Repository" : "Save to Repository"}
+                    disabled={savedIds.includes(msg.id)}
                   >
-                    <Save size={14} />
+                    {savedIds.includes(msg.id) ? <Check size={14} /> : <Save size={14} />}
                   </button>
                   <button 
                     onClick={() => copyToClipboard(msg.content, msg.id)}
@@ -1109,19 +1246,44 @@ const ResearchAssistant = () => {
 
       <div className="relative group">
         <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500 to-emerald-500 rounded-2xl blur opacity-10 group-focus-within:opacity-25 transition duration-1000 group-focus-within:duration-200" />
-        <div className="relative flex items-center">
-          <input 
-            type="text" 
+        <div className="relative flex items-start">
+          <textarea 
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            placeholder="Describe your legal research problem (e.g., 'What are the elements of theft under RPC?')..."
-            className="w-full p-5 pr-16 bg-white border border-slate-200 rounded-2xl focus:outline-none focus:border-indigo-500 transition-all shadow-lg"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            placeholder={
+              researchMode === 'summarizer' 
+                ? "Paste case text or provide a citation (e.g., 'Estrada vs. Desierto, G.R. No. 146710')..." 
+                : "Describe your legal research problem..."
+            }
+            className="w-full p-5 pr-16 bg-white border border-slate-200 rounded-2xl focus:outline-none focus:border-indigo-500 transition-all shadow-lg min-h-[64px] max-h-[300px] resize-none"
+            rows={1}
+            style={{ height: 'auto' }}
+            ref={(el) => {
+              if (el) {
+                el.style.height = 'auto';
+                el.style.height = el.scrollHeight + 'px';
+              }
+            }}
           />
+          {query && (
+            <button 
+              onClick={() => setQuery('')}
+              className="absolute right-16 top-6 p-1 text-slate-400 hover:text-slate-600 transition-all"
+              title="Clear"
+            >
+              <X size={16} />
+            </button>
+          )}
           <button 
             onClick={() => handleSend()}
             disabled={loading || !query.trim()}
-            className="absolute right-3 p-3 bg-slate-900 text-white rounded-xl hover:bg-indigo-600 transition-all disabled:opacity-50 disabled:hover:bg-slate-900"
+            className="absolute right-3 top-3 p-3 bg-slate-900 text-white rounded-xl hover:bg-indigo-600 transition-all disabled:opacity-50 disabled:hover:bg-slate-900"
           >
             <Zap size={20} />
           </button>
@@ -1354,6 +1516,7 @@ const CaseSummarizer = () => {
   const [citationInput, setCitationInput] = useState('');
   const [summary, setSummary] = useState<CaseSummary | null>(null);
   const [loading, setLoading] = useState(false);
+  const [searchMode, setSearchMode] = useState(false);
 
   const sampleCase = `G.R. No. 135981. January 15, 2004.
 PEOPLE OF THE PHILIPPINES, appellee, vs. MARIVIC GENOSA, appellant.
@@ -1367,9 +1530,10 @@ In the present case, the appellant, Marivic Genosa, was charged with parricide f
 
 The trial court convicted her of parricide and sentenced her to death. On appeal, the Supreme Court recognized the existence of battered woman syndrome in the Philippines but ruled that the appellant failed to prove all the elements of self-defense. However, the Court appreciated the syndrome as a mitigating circumstance, analogous to passion or obfuscation, and reduced her sentence.`;
 
-  const handleSummarize = async () => {
-    if (!caseText.trim()) return;
+  const handleSummarize = async (useSearch = false) => {
+    if (!caseText.trim() && !citationInput.trim()) return;
     setLoading(true);
+    setSearchMode(useSearch);
     setSummary(null);
 
     if (!process.env.GEMINI_API_KEY) {
@@ -1380,27 +1544,41 @@ The trial court convicted her of parricide and sentenced her to death. On appeal
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents: `Please provide a detailed legal summary of the following Philippine Supreme Court decision. 
+      
+      let prompt = "";
+      let config: any = {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING, description: "The full title of the case (e.g., People vs. Juan Dela Cruz)" },
+            citation: { type: Type.STRING, description: "The Case Citation (e.g., G.R. No. 123456 and date of the decision)" },
+            facts: { type: Type.STRING, description: "A concise summary of the material facts of the case" },
+            issues: { type: Type.STRING, description: "The legal issues addressed by the court" },
+            ruling: { type: Type.STRING, description: "The court's ruling and ratio decidendi" },
+            analysis: { type: Type.STRING, description: "A brief analysis of the case, highlighting key legal principles and implications" },
+          },
+          required: ["title", "citation", "facts", "issues", "ruling", "analysis"]
+        }
+      };
+
+      if (useSearch) {
+        prompt = `Search for the full text of the Philippine Supreme Court case: ${citationInput}. 
+        Once found, provide a detailed legal summary. 
+        Extract the Case Title, Case Citation, Facts, Issues, Ruling, and a brief Legal Analysis.`;
+        config.tools = [{ googleSearch: {} }];
+        config.thinkingConfig = { thinkingLevel: ThinkingLevel.HIGH };
+      } else {
+        prompt = `Please provide a detailed legal summary of the following Philippine Supreme Court decision. 
         Extract the Case Title, Case Citation (G.R. Number), Facts, Issues, Ruling, and a brief Legal Analysis highlighting key legal principles and their implications.
         
-        Case Text: ${caseText}`,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING, description: "The full title of the case (e.g., People vs. Juan Dela Cruz)" },
-              citation: { type: Type.STRING, description: "The Case Citation (e.g., G.R. No. 123456 and date of the decision)" },
-              facts: { type: Type.STRING, description: "A concise summary of the material facts of the case" },
-              issues: { type: Type.STRING, description: "The legal issues addressed by the court" },
-              ruling: { type: Type.STRING, description: "The court's ruling and ratio decidendi" },
-              analysis: { type: Type.STRING, description: "A brief analysis of the case, highlighting key legal principles and implications" },
-            },
-            required: ["title", "citation", "facts", "issues", "ruling", "analysis"]
-          }
-        }
+        Case Text: ${caseText}`;
+      }
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.1-pro-preview",
+        contents: prompt,
+        config: config
       });
       
       if (response.text) {
@@ -1410,6 +1588,7 @@ The trial court convicted her of parricide and sentenced her to death. On appeal
       console.error(err);
     } finally {
       setLoading(false);
+      setSearchMode(false);
     }
   };
 
@@ -1487,20 +1666,30 @@ Generated by LexPH AI Case Summarizer
                 />
               </div>
             </div>
-            <div className="flex gap-3 mt-4">
+            <div className="flex flex-col gap-3 mt-4">
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => handleSummarize(false)}
+                  disabled={loading || !caseText.trim()}
+                  className="flex-1 py-3 bg-slate-900 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-slate-800 transition-colors disabled:opacity-50"
+                >
+                  {loading && !searchMode ? <Zap className="animate-spin" size={20} /> : <BookOpen size={20} />}
+                  {loading && !searchMode ? 'Summarizing...' : 'Summarize Text'}
+                </button>
+                <button 
+                  onClick={() => handleSummarize(true)}
+                  disabled={loading || !citationInput.trim()}
+                  className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                >
+                  {loading && searchMode ? <Zap className="animate-spin" size={20} /> : <Search size={20} />}
+                  {loading && searchMode ? 'Searching...' : 'Search & Summarize'}
+                </button>
+              </div>
               <button 
-                onClick={handleSummarize}
-                disabled={loading || !caseText.trim()}
-                className="flex-1 py-3 bg-slate-900 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-slate-800 transition-colors disabled:opacity-50"
+                onClick={() => { setCaseText(''); setCitationInput(''); setSummary(null); }}
+                className="w-full py-3 border border-slate-200 text-slate-600 rounded-xl font-medium hover:bg-slate-50 transition-colors"
               >
-                {loading ? <Zap className="animate-spin" size={20} /> : <BookOpen size={20} />}
-                {loading ? 'Summarizing...' : 'Generate Structured Summary'}
-              </button>
-              <button 
-                onClick={() => { setCaseText(''); setSummary(null); }}
-                className="px-6 py-3 border border-slate-200 text-slate-600 rounded-xl font-medium hover:bg-slate-50 transition-colors"
-              >
-                Clear
+                Clear All
               </button>
             </div>
           </div>

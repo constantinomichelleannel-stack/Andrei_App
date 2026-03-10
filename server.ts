@@ -6,6 +6,10 @@ import path from "path";
 import { fileURLToPath } from "url";
 import multer from "multer";
 import fs from "fs";
+import mammoth from "mammoth";
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const pdf = require('pdf-parse');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -46,11 +50,31 @@ db.exec(`
     filename TEXT NOT NULL,
     title TEXT,
     type TEXT, -- 'case', 'statute', 'memo'
+    citation TEXT,
     summary TEXT,
     tags TEXT, -- comma-separated tags
+    size INTEGER,
+    status TEXT DEFAULT 'completed', -- 'processing', 'completed', 'failed'
     uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  -- Add citation column if it doesn't exist (for existing databases)
+  PRAGMA table_info(documents);
 `);
+
+// Check if columns exist, if not add them
+const tableInfo = db.prepare("PRAGMA table_info(documents)").all() as any[];
+const columns = tableInfo.map(col => col.name);
+
+if (!columns.includes('citation')) {
+  db.exec("ALTER TABLE documents ADD COLUMN citation TEXT;");
+}
+if (!columns.includes('size')) {
+  db.exec("ALTER TABLE documents ADD COLUMN size INTEGER;");
+}
+if (!columns.includes('status')) {
+  db.exec("ALTER TABLE documents ADD COLUMN status TEXT DEFAULT 'completed';");
+}
 
 async function startServer() {
   const app = express();
@@ -84,8 +108,8 @@ async function startServer() {
     res.json(formattedDocs);
   });
 
-  app.post("/api/documents", upload.single("file"), (req, res) => {
-    const { title, type, tags, summary: providedSummary } = req.body;
+  app.post("/api/documents", upload.single("file"), async (req, res) => {
+    const { title, type, tags, citation, summary: providedSummary } = req.body;
     const file = req.file;
 
     if (!file) {
@@ -102,17 +126,38 @@ async function startServer() {
         if (['.txt', '.md', '.csv', '.json', '.html'].includes(ext)) {
           const content = fs.readFileSync(filePath, 'utf8');
           summary = content.substring(0, 200) + (content.length > 200 ? '...' : '');
+        } else if (ext === '.pdf') {
+          try {
+            const dataBuffer = fs.readFileSync(filePath);
+            const data = await pdf(dataBuffer);
+            summary = data.text.substring(0, 200) + (data.text.length > 200 ? '...' : '');
+          } catch (err) {
+            console.error("PDF summary extraction failed:", err);
+            summary = `Legal ${type || 'document'} uploaded: ${file.originalname}`;
+          }
+        } else if (ext === '.docx') {
+          try {
+            const dataBuffer = fs.readFileSync(filePath);
+            const result = await mammoth.extractRawText({ buffer: dataBuffer });
+            summary = result.value.substring(0, 200) + (result.value.length > 200 ? '...' : '');
+          } catch (err) {
+            console.error("DOCX summary extraction failed:", err);
+            summary = `Legal ${type || 'document'} uploaded: ${file.originalname}`;
+          }
         } else {
           summary = `Legal ${type || 'document'} uploaded: ${file.originalname}`;
         }
       }
 
-      const info = db.prepare("INSERT INTO documents (filename, title, type, summary, tags) VALUES (?, ?, ?, ?, ?)").run(
+      const info = db.prepare("INSERT INTO documents (filename, title, type, citation, summary, tags, size, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
         file.filename,
         title || file.originalname,
         type || 'case',
+        citation || '',
         summary,
-        tags || ''
+        tags || '',
+        file.size,
+        'completed'
       );
       res.json({ id: info.lastInsertRowid, filename: file.filename, summary });
     } catch (err) {
@@ -130,7 +175,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/documents/preview/:filename", (req, res) => {
+  app.get("/api/documents/preview/:filename", async (req, res) => {
     const filePath = path.join(uploadDir, req.params.filename);
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: "File not found" });
@@ -143,6 +188,22 @@ async function startServer() {
         res.json({ content });
       } catch (err) {
         res.status(500).json({ error: "Failed to read file" });
+      }
+    } else if (ext === '.pdf') {
+      try {
+        const dataBuffer = fs.readFileSync(filePath);
+        const data = await pdf(dataBuffer);
+        res.json({ content: data.text });
+      } catch (err) {
+        res.status(500).json({ error: "Failed to parse PDF" });
+      }
+    } else if (ext === '.docx') {
+      try {
+        const dataBuffer = fs.readFileSync(filePath);
+        const result = await mammoth.extractRawText({ buffer: dataBuffer });
+        res.json({ content: result.value });
+      } catch (err) {
+        res.status(500).json({ error: "Failed to parse DOCX" });
       }
     } else {
       res.status(400).json({ error: "Preview not supported for this file type" });
