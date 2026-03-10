@@ -13,6 +13,24 @@ export interface LegalDocument {
   type: 'case' | 'statute' | 'memo';
   summary: string;
   uploaded_at: string;
+  tags?: string[];
 }
 
-export type ViewType = 'dashboard' | 'research' | 'knowledge' | 'library' | 'analytics' | 'settings';
+export type ViewType = 'dashboard' | 'research' | 'knowledge' | 'library' | 'analytics' | 'summarizer' | 'settings' | 'jurisprudence' | 'workflows';
+
+export interface CaseSummary {
+  title: string;
+  citation: string;
+  facts: string;
+  issues: string;
+  ruling: string;
+  analysis: string;
+}
+
+export interface LegalPrediction {
+  probability: number;
+  strengths: string[];
+  risks: string[];
+  strategy: string;
+  analysis: string;
+}

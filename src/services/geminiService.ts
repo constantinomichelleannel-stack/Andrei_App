@@ -1,8 +1,15 @@
 import { GoogleGenAI } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+const getAI = () => {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) {
+    throw new Error("GEMINI_API_KEY is not defined. Please add it in the Settings > Secrets menu.");
+  }
+  return new GoogleGenAI({ apiKey: key });
+};
 
 export const getLegalAssistant = (prompt: string) => {
+  const ai = getAI();
   return ai.models.generateContent({
     model: "gemini-3.1-pro-preview",
     contents: prompt,
@@ -22,6 +29,7 @@ export const getLegalAssistant = (prompt: string) => {
 };
 
 export const predictCaseOutcome = async (facts: string) => {
+  const ai = getAI();
   const response = await ai.models.generateContent({
     model: "gemini-3.1-pro-preview",
     contents: `As a legal predictive analytics tool for Philippine Law, analyze the following case facts and predict the likely outcome based on current jurisprudence and legal principles. 
@@ -37,6 +45,7 @@ export const predictCaseOutcome = async (facts: string) => {
 };
 
 export const analyzeJurisprudenceTrends = async (topic: string) => {
+  const ai = getAI();
   const response = await ai.models.generateContent({
     model: "gemini-3.1-pro-preview",
     contents: `Analyze the recent trends in Philippine Supreme Court jurisprudence regarding: ${topic}.
@@ -46,6 +55,7 @@ export const analyzeJurisprudenceTrends = async (topic: string) => {
 };
 
 export const summarizeCase = async (caseText: string) => {
+  const ai = getAI();
   const response = await ai.models.generateContent({
     model: "gemini-3.1-pro-preview",
     contents: `Please provide a concise legal summary of the following Philippine Supreme Court decision. 
