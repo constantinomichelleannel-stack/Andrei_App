@@ -17,6 +17,10 @@ export interface LegalDocument {
   status?: 'processing' | 'completed' | 'failed';
   uploaded_at: string;
   tags?: string[];
+  citation_check?: {
+    status: 'valid' | 'caution' | 'invalid' | 'unchecked';
+    analysis: string;
+  };
 }
 
 export type ViewType = 'dashboard' | 'research' | 'knowledge' | 'library' | 'analytics' | 'summarizer' | 'settings' | 'jurisprudence' | 'workflows';

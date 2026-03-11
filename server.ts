@@ -55,6 +55,7 @@ db.exec(`
     tags TEXT, -- comma-separated tags
     size INTEGER,
     status TEXT DEFAULT 'completed', -- 'processing', 'completed', 'failed'
+    citation_check TEXT, -- JSON string for citation analysis
     uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -74,6 +75,9 @@ if (!columns.includes('size')) {
 }
 if (!columns.includes('status')) {
   db.exec("ALTER TABLE documents ADD COLUMN status TEXT DEFAULT 'completed';");
+}
+if (!columns.includes('citation_check')) {
+  db.exec("ALTER TABLE documents ADD COLUMN citation_check TEXT;");
 }
 
 async function startServer() {
@@ -103,13 +107,14 @@ async function startServer() {
     const docs = db.prepare("SELECT * FROM documents ORDER BY uploaded_at DESC").all();
     const formattedDocs = docs.map(doc => ({
       ...doc,
-      tags: doc.tags ? doc.tags.split(',') : []
+      tags: doc.tags ? doc.tags.split(',') : [],
+      citation_check: doc.citation_check ? JSON.parse(doc.citation_check) : null
     }));
     res.json(formattedDocs);
   });
 
   app.post("/api/documents", upload.single("file"), async (req, res) => {
-    const { title, type, tags, citation, summary: providedSummary } = req.body;
+    const { title, type, tags, citation, summary: providedSummary, citation_check } = req.body;
     const file = req.file;
 
     if (!file) {
@@ -149,7 +154,7 @@ async function startServer() {
         }
       }
 
-      const info = db.prepare("INSERT INTO documents (filename, title, type, citation, summary, tags, size, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
+      const info = db.prepare("INSERT INTO documents (filename, title, type, citation, summary, tags, size, status, citation_check) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
         file.filename,
         title || file.originalname,
         type || 'case',
@@ -157,7 +162,8 @@ async function startServer() {
         summary,
         tags || '',
         file.size,
-        'completed'
+        'completed',
+        citation_check || null
       );
       res.json({ id: info.lastInsertRowid, filename: file.filename, summary });
     } catch (err) {

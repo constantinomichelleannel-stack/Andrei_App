@@ -37,7 +37,8 @@ import {
   History,
   Book,
   Calendar,
-  Filter
+  Filter,
+  Tag
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ViewType, Note, LegalDocument, CaseSummary, LegalPrediction } from './types';
@@ -160,8 +161,25 @@ const Dashboard = ({
               { task: "Pre-trial Conference", client: "Juan Dela Cruz", due: "In 5 days", priority: "medium" },
               { task: "Contract Review", client: "Global Tech", due: "In 1 week", priority: "low" },
             ].map((item, i) => (
-              <div key={i} className="flex items-center gap-4 p-3 border-l-4 border-slate-200 hover:bg-slate-50 rounded-r-lg transition-colors cursor-pointer">
-                <div className={`w-2 h-2 rounded-full ${item.priority === 'high' ? 'bg-red-500' : item.priority === 'medium' ? 'bg-amber-500' : 'bg-blue-500'}`} />
+              <div key={i} className={`flex items-center gap-4 p-3 border-l-4 ${
+                item.priority === 'high' ? 'border-red-500' : 
+                item.priority === 'medium' ? 'border-amber-500' : 
+                'border-blue-500'
+              } hover:bg-slate-50 rounded-r-lg transition-colors cursor-pointer`}>
+                <div className="flex flex-col items-center gap-1 min-w-[40px]">
+                  <div className={`w-2 h-2 rounded-full ${
+                    item.priority === 'high' ? 'bg-red-500' : 
+                    item.priority === 'medium' ? 'bg-amber-500' : 
+                    'bg-blue-500'
+                  }`} />
+                  <span className={`text-[8px] font-mono uppercase font-bold ${
+                    item.priority === 'high' ? 'text-red-600' : 
+                    item.priority === 'medium' ? 'text-amber-600' : 
+                    'text-blue-600'
+                  }`}>
+                    {item.priority}
+                  </span>
+                </div>
                 <div className="flex-1">
                   <div className="font-medium text-slate-900">{item.task}</div>
                   <div className="text-xs text-slate-500">{item.client}</div>
@@ -196,6 +214,7 @@ const DocumentLibrary = () => {
   const [endDate, setEndDate] = useState('');
   const [sizeFilter, setSizeFilter] = useState<'all' | 'small' | 'medium' | 'large'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'processing' | 'failed'>('all');
+  const [tagFilter, setTagFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
   const fetchDocuments = async () => {
@@ -220,9 +239,10 @@ const DocumentLibrary = () => {
 
     setIsUploading(true);
     
-    let generatedSummary = "";
+    let finalSummary = manualSummary.trim();
+    let citationCheck = null;
     
-    // Attempt to generate AI summary if API key is available
+    // Attempt to generate AI summary and check citations if API key is available
     if (process.env.GEMINI_API_KEY) {
       try {
         const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -237,28 +257,80 @@ const DocumentLibrary = () => {
           reader.readAsDataURL(file);
         });
 
-        const response = await ai.models.generateContent({
-          model: "gemini-3.1-pro-preview",
-          contents: [
-            {
-              parts: [
+        // 1. Generate Summary if needed
+        if (!finalSummary) {
+          try {
+            const summaryResponse = await ai.models.generateContent({
+              model: "gemini-3.1-pro-preview",
+              contents: [
                 {
-                  inlineData: {
-                    mimeType: file.type || "application/octet-stream",
-                    data: fileBase64,
-                  },
-                },
-                {
-                  text: "Please provide a concise, one-sentence legal summary of this document. Focus on the main subject matter and legal significance.",
+                  parts: [
+                    {
+                      inlineData: {
+                        mimeType: file.type || "application/octet-stream",
+                        data: fileBase64,
+                      },
+                    },
+                    {
+                      text: "Please provide a concise, one-sentence legal summary of this document. Focus on the main subject matter and legal significance.",
+                    },
+                  ],
                 },
               ],
-            },
-          ],
-        });
-        
-        generatedSummary = response.text || "";
+            });
+            finalSummary = summaryResponse.text || "";
+          } catch (err) {
+            console.error("AI Summarization failed:", err);
+          }
+        }
+
+        // 2. Check Citations
+        try {
+          const citationResponse = await ai.models.generateContent({
+            model: "gemini-3.1-pro-preview",
+            contents: [
+              {
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType: file.type || "application/octet-stream",
+                      data: fileBase64,
+                    },
+                  },
+                  {
+                    text: "Analyze the legal citations in this document. Identify the main citations and check if they are still valid and current (e.g., not overturned, repealed, or amended). Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and 'analysis' (a brief explanation of the validity of the citations found).",
+                  },
+                ],
+              },
+            ],
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  status: { 
+                    type: Type.STRING, 
+                    description: "Status of the citations found in the document.",
+                    enum: ['valid', 'caution', 'invalid'] 
+                  },
+                  analysis: { 
+                    type: Type.STRING,
+                    description: "Detailed analysis of the citations."
+                  }
+                },
+                required: ['status', 'analysis']
+              }
+            }
+          });
+          if (citationResponse.text) {
+            citationCheck = JSON.parse(citationResponse.text);
+          }
+        } catch (err) {
+          console.error("Citation check failed:", err);
+        }
+
       } catch (err) {
-        console.error("AI Summarization failed:", err);
+        console.error("Gemini processing failed:", err);
       }
     }
 
@@ -268,10 +340,11 @@ const DocumentLibrary = () => {
     formData.append('citation', citation);
     formData.append('type', type);
     formData.append('tags', tags);
-    if (manualSummary.trim()) {
-      formData.append('summary', manualSummary);
-    } else if (generatedSummary) {
-      formData.append('summary', generatedSummary);
+    if (finalSummary) {
+      formData.append('summary', finalSummary);
+    }
+    if (citationCheck) {
+      formData.append('citation_check', JSON.stringify(citationCheck));
     }
 
     try {
@@ -382,6 +455,16 @@ const DocumentLibrary = () => {
     });
   }, [documents]);
 
+  const allTags = useMemo(() => {
+    const tagsSet = new Set<string>();
+    documents.forEach(doc => {
+      if (Array.isArray(doc.tags)) {
+        doc.tags.forEach(tag => tagsSet.add(tag.trim()));
+      }
+    });
+    return Array.from(tagsSet).sort();
+  }, [documents]);
+
   const filteredDocuments = useMemo(() => {
     let results = documents;
 
@@ -397,15 +480,16 @@ const DocumentLibrary = () => {
       const matchesEndDate = !endDate || docDate <= new Date(endDate + 'T23:59:59');
       
       const matchesStatus = statusFilter === 'all' || doc.status === statusFilter;
+      const matchesTag = tagFilter === 'all' || (Array.isArray(doc.tags) && doc.tags.includes(tagFilter));
 
       let matchesSize = true;
       if (sizeFilter === 'small') matchesSize = (doc.size || 0) < 1024 * 1024; // < 1MB
       else if (sizeFilter === 'medium') matchesSize = (doc.size || 0) >= 1024 * 1024 && (doc.size || 0) < 10 * 1024 * 1024; // 1MB - 10MB
       else if (sizeFilter === 'large') matchesSize = (doc.size || 0) >= 10 * 1024 * 1024; // > 10MB
       
-      return matchesType && matchesStartDate && matchesEndDate && matchesStatus && matchesSize;
+      return matchesType && matchesStartDate && matchesEndDate && matchesStatus && matchesSize && matchesTag;
     });
-  }, [documents, searchQuery, filter, startDate, endDate, sizeFilter, statusFilter, fuse]);
+  }, [documents, searchQuery, filter, startDate, endDate, sizeFilter, statusFilter, tagFilter, fuse]);
 
   return (
     <div className="space-y-8">
@@ -523,6 +607,7 @@ const DocumentLibrary = () => {
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-2">
                   <Filter size={14} className="text-slate-400" />
+                  <span className="text-[10px] font-mono text-slate-400 uppercase">Case Type:</span>
                   <select 
                     value={filter}
                     onChange={(e) => setFilter(e.target.value as any)}
@@ -587,6 +672,20 @@ const DocumentLibrary = () => {
                     <option value="completed">Completed</option>
                     <option value="processing">Processing</option>
                     <option value="failed">Failed</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Tag size={14} className="text-slate-400" />
+                  <select 
+                    value={tagFilter}
+                    onChange={(e) => setTagFilter(e.target.value)}
+                    className="text-xs font-medium bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 max-w-[150px]"
+                  >
+                    <option value="all">All Tags</option>
+                    {allTags.map(tag => (
+                      <option key={tag} value={tag}>{tag}</option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -692,6 +791,18 @@ const DocumentLibrary = () => {
                           {doc.citation && (
                             <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200">
                               {highlightText(doc.citation, searchQuery)}
+                            </span>
+                          )}
+                          {doc.citation_check && (
+                            <span className={`flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter ${
+                              doc.citation_check.status === 'valid' ? 'bg-emerald-100 text-emerald-700' :
+                              doc.citation_check.status === 'caution' ? 'bg-amber-100 text-amber-700' :
+                              'bg-red-100 text-red-700'
+                            }`}>
+                              {doc.citation_check.status === 'valid' ? <Check size={10} /> : 
+                               doc.citation_check.status === 'caution' ? <ShieldAlert size={10} /> : 
+                               <X size={10} />}
+                              Citations: {doc.citation_check.status}
                             </span>
                           )}
                         </div>
@@ -832,6 +943,32 @@ const DocumentLibrary = () => {
                         <div className="p-6 bg-slate-50 rounded-xl border border-slate-100 italic text-slate-600 leading-relaxed">
                           "{previewDoc.summary}"
                         </div>
+                      </div>
+                    )}
+
+                    {previewDoc.citation_check && (
+                      <div className={`p-6 rounded-xl border ${
+                        previewDoc.citation_check.status === 'valid' ? 'bg-emerald-50 border-emerald-100' :
+                        previewDoc.citation_check.status === 'caution' ? 'bg-amber-50 border-amber-100' :
+                        'bg-red-50 border-red-100'
+                      }`}>
+                        <h4 className={`font-bold mb-2 flex items-center gap-2 ${
+                          previewDoc.citation_check.status === 'valid' ? 'text-emerald-900' :
+                          previewDoc.citation_check.status === 'caution' ? 'text-amber-900' :
+                          'text-red-900'
+                        }`}>
+                          {previewDoc.citation_check.status === 'valid' ? <CheckCircle2 size={18} /> : 
+                           previewDoc.citation_check.status === 'caution' ? <ShieldAlert size={18} /> : 
+                           <X size={18} />}
+                          Citation Validity Check: {previewDoc.citation_check.status.toUpperCase()}
+                        </h4>
+                        <p className={`text-sm ${
+                          previewDoc.citation_check.status === 'valid' ? 'text-emerald-700' :
+                          previewDoc.citation_check.status === 'caution' ? 'text-amber-700' :
+                          'text-red-700'
+                        }`}>
+                          {previewDoc.citation_check.analysis}
+                        </p>
                       </div>
                     )}
                   </div>
