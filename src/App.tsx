@@ -69,11 +69,13 @@ const SidebarItem = ({
 const Dashboard = ({ 
   onViewAllJurisprudence,
   onViewAnalytics,
-  onViewWorkflows
+  onViewWorkflows,
+  onViewStatutes
 }: { 
   onViewAllJurisprudence: () => void,
   onViewAnalytics: () => void,
-  onViewWorkflows: () => void
+  onViewWorkflows: () => void,
+  onViewStatutes: () => void
 }) => {
   return (
     <div className="space-y-6">
@@ -153,41 +155,29 @@ const Dashboard = ({
 
         <div className="legal-card p-6">
           <h3 className="text-lg font-serif font-bold mb-4 flex items-center gap-2">
-            <Briefcase size={20} /> Upcoming Deadlines
+            <Book size={20} /> Statutes & Regulations
           </h3>
           <div className="space-y-4">
             {[
-              { task: "Filing of Appellant's Brief", client: "ABC Corp", due: "In 2 days", priority: "high" },
-              { task: "Pre-trial Conference", client: "Juan Dela Cruz", due: "In 5 days", priority: "medium" },
-              { task: "Contract Review", client: "Global Tech", due: "In 1 week", priority: "low" },
+              { title: "Revised Penal Code", type: "Code", year: "1930" },
+              { title: "Civil Code of the PH", type: "Code", year: "1949" },
+              { title: "Data Privacy Act", type: "RA 10173", year: "2012" },
             ].map((item, i) => (
-              <div key={i} className={`flex items-center gap-4 p-3 border-l-4 ${
-                item.priority === 'high' ? 'border-red-500' : 
-                item.priority === 'medium' ? 'border-amber-500' : 
-                'border-blue-500'
-              } hover:bg-slate-50 rounded-r-lg transition-colors cursor-pointer`}>
-                <div className="flex flex-col items-center gap-1 min-w-[40px]">
-                  <div className={`w-2 h-2 rounded-full ${
-                    item.priority === 'high' ? 'bg-red-500' : 
-                    item.priority === 'medium' ? 'bg-amber-500' : 
-                    'bg-blue-500'
-                  }`} />
-                  <span className={`text-[8px] font-mono uppercase font-bold ${
-                    item.priority === 'high' ? 'text-red-600' : 
-                    item.priority === 'medium' ? 'text-amber-600' : 
-                    'text-blue-600'
-                  }`}>
-                    {item.priority}
-                  </span>
+              <div key={i} className="flex items-center justify-between p-3 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer border-b border-slate-100 last:border-0">
+                <div>
+                  <div className="font-medium text-slate-900">{item.title}</div>
+                  <div className="text-xs text-slate-500 font-mono">{item.type}</div>
                 </div>
-                <div className="flex-1">
-                  <div className="font-medium text-slate-900">{item.task}</div>
-                  <div className="text-xs text-slate-500">{item.client}</div>
-                </div>
-                <div className="text-xs font-medium text-slate-600">{item.due}</div>
+                <div className="text-xs text-slate-400">{item.year}</div>
               </div>
             ))}
           </div>
+          <button 
+            onClick={onViewStatutes}
+            className="w-full mt-4 py-2 text-sm text-slate-500 hover:text-slate-900 transition-colors flex items-center justify-center gap-1"
+          >
+            Search all laws <ChevronRight size={16} />
+          </button>
         </div>
       </div>
     </div>
@@ -210,6 +200,7 @@ const DocumentLibrary = () => {
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
+  const [isBatchDownloading, setIsBatchDownloading] = useState(false);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [sizeFilter, setSizeFilter] = useState<'all' | 'small' | 'medium' | 'large'>('all');
@@ -424,18 +415,38 @@ const DocumentLibrary = () => {
     }
   };
 
-  const handleBatchDownload = () => {
-    selectedIds.forEach(id => {
-      const doc = documents.find(d => d.id === id);
-      if (doc) {
-        const link = document.createElement('a');
-        link.href = `/api/documents/download/${doc.filename}`;
-        link.download = doc.filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+  const handleBatchDownload = async () => {
+    if (selectedIds.length === 0) return;
+    
+    setIsBatchDownloading(true);
+    try {
+      const response = await fetch('/api/documents/batch-download', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ids: selectedIds }),
+      });
+
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `legal-documents-${new Date().toISOString().split('T')[0]}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      } else {
+        const errorData = await response.json();
+        console.error('Batch download failed:', errorData.error);
       }
-    });
+    } catch (err) {
+      console.error('Batch download error:', err);
+    } finally {
+      setIsBatchDownloading(false);
+    }
   };
 
   const highlightText = (text: string, query: string) => {
@@ -733,9 +744,17 @@ const DocumentLibrary = () => {
                     <div className="flex items-center gap-3">
                       <button 
                         onClick={handleBatchDownload}
-                        className="flex items-center gap-2 px-4 py-2 bg-white border border-indigo-200 text-indigo-700 rounded-lg text-sm font-bold hover:bg-indigo-100 transition-colors"
+                        disabled={isBatchDownloading}
+                        className="flex items-center gap-2 px-4 py-2 bg-white border border-indigo-200 text-indigo-700 rounded-lg text-sm font-bold hover:bg-indigo-100 transition-colors disabled:opacity-50"
                       >
-                        <Download size={16} /> Download
+                        {isBatchDownloading ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
+                            Zipping...
+                          </>
+                        ) : (
+                          <><Download size={16} /> Download</>
+                        )}
                       </button>
                       <button 
                         onClick={handleBatchDelete}
@@ -1648,6 +1667,179 @@ const PredictiveAnalytics = () => {
   );
 };
 
+const StatuteSearch = () => {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [selectedLaw, setSelectedLaw] = useState<any | null>(null);
+
+  const handleSearch = async () => {
+    if (!query.trim()) return;
+    setLoading(true);
+    setResults([]);
+    setSelectedLaw(null);
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const response = await ai.models.generateContent({
+        model: "gemini-3.1-pro-preview",
+        contents: `Search for specific Philippine laws, statutes, or regulations related to: ${query}. 
+        Return a JSON array of objects, each with: 'title' (e.g., Republic Act No. 9262), 'description' (brief summary), 'year' (enactment year), and 'relevance' (why it matches).`,
+        config: {
+          tools: [{ googleSearch: {} }],
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                description: { type: Type.STRING },
+                year: { type: Type.STRING },
+                relevance: { type: Type.STRING },
+              },
+              required: ["title", "description", "year", "relevance"]
+            }
+          }
+        }
+      });
+
+      if (response.text) {
+        setResults(JSON.parse(response.text));
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchLawDetails = async (lawTitle: string) => {
+    setLoading(true);
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const response = await ai.models.generateContent({
+        model: "gemini-3.1-pro-preview",
+        contents: `Provide a detailed breakdown of ${lawTitle}. Include its full title, date of effectivity, key provisions, and its current status (active, amended, or repealed). Also provide a brief explanation of its impact on Philippine law.`,
+        config: { tools: [{ googleSearch: {} }] }
+      });
+      setSelectedLaw({ title: lawTitle, details: response.text });
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <header>
+        <h1 className="text-3xl font-serif font-bold text-slate-900">Statutes & Regulations</h1>
+        <p className="text-slate-500">Advanced search for Philippine Republic Acts, Presidential Decrees, and Administrative Orders.</p>
+      </header>
+
+      <div className="flex gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+          <input 
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+            placeholder="Search by law number, title, or subject (e.g., 'RA 9165' or 'Cybercrime Law')..."
+            className="w-full pl-12 pr-4 py-4 bg-white border border-slate-200 rounded-2xl focus:outline-none focus:border-indigo-500 shadow-sm"
+          />
+        </div>
+        <button 
+          onClick={handleSearch}
+          disabled={loading || !query.trim()}
+          className="px-8 bg-slate-900 text-white rounded-2xl font-bold hover:bg-indigo-600 transition-all disabled:opacity-50"
+        >
+          {loading ? <Zap className="animate-spin" size={20} /> : 'Search'}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-1 space-y-4">
+          <h3 className="text-xs font-mono text-slate-400 uppercase tracking-widest px-2">Search Results</h3>
+          {results.length === 0 && !loading && (
+            <div className="p-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-slate-400">
+              <Book size={40} className="mx-auto mb-3 opacity-20" />
+              <p className="text-sm italic">No results yet. Try searching for a specific law.</p>
+            </div>
+          )}
+          {results.map((law, i) => (
+            <div 
+              key={i}
+              onClick={() => fetchLawDetails(law.title)}
+              className={`legal-card p-5 cursor-pointer transition-all border-2 ${
+                selectedLaw?.title === law.title ? 'border-indigo-500 bg-indigo-50/30' : 'border-transparent hover:border-slate-200'
+              }`}
+            >
+              <div className="flex justify-between items-start mb-2">
+                <h4 className="font-bold text-slate-900">{law.title}</h4>
+                <span className="text-[10px] font-mono bg-slate-100 px-2 py-0.5 rounded text-slate-500">{law.year}</span>
+              </div>
+              <p className="text-xs text-slate-600 line-clamp-2 mb-3">{law.description}</p>
+              <div className="flex items-center gap-2 text-[10px] text-indigo-600 font-bold uppercase tracking-wider">
+                <Activity size={12} /> {law.relevance}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="lg:col-span-2">
+          <div className="legal-card p-8 min-h-[500px] bg-white">
+            {!selectedLaw && !loading && (
+              <div className="h-full flex flex-col items-center justify-center text-slate-300 text-center">
+                <Database size={80} strokeWidth={1} className="mb-4 opacity-20" />
+                <p className="text-lg font-serif italic">Select a law from the results to view detailed provisions and status.</p>
+              </div>
+            )}
+            {loading && !results.length && (
+              <div className="flex flex-col items-center justify-center h-full space-y-4">
+                <Zap className="animate-spin text-indigo-500" size={40} />
+                <p className="text-slate-500 font-mono text-xs animate-pulse">QUERYING LEGAL DATABASE...</p>
+              </div>
+            )}
+            {selectedLaw && (
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-6"
+              >
+                <div className="flex justify-between items-start border-b border-slate-100 pb-6">
+                  <div>
+                    <h2 className="text-2xl font-serif font-bold text-slate-900">{selectedLaw.title}</h2>
+                    <p className="text-xs font-mono text-slate-400 uppercase tracking-widest mt-1">Statutory Breakdown</p>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      const blob = new Blob([selectedLaw.details], { type: 'text/markdown' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `${selectedLaw.title.replace(/\s+/g, '_')}_Details.md`;
+                      a.click();
+                    }}
+                    className="p-2 text-slate-400 hover:text-indigo-600 transition-colors"
+                    title="Download Details"
+                  >
+                    <Download size={20} />
+                  </button>
+                </div>
+                <div className="markdown-body prose prose-slate max-w-none text-sm leading-relaxed">
+                  <Markdown>{selectedLaw.details}</Markdown>
+                </div>
+              </motion.div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const CaseSummarizer = () => {
   const [caseText, setCaseText] = useState('');
   const [citationInput, setCitationInput] = useState('');
@@ -1726,6 +1918,37 @@ The trial court convicted her of parricide and sentenced her to death. On appeal
     } finally {
       setLoading(false);
       setSearchMode(false);
+    }
+  };
+
+  const saveToLibrary = async () => {
+    if (!summary) return;
+    setLoading(true);
+    try {
+      const res = await fetch('/api/documents/save-summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: summary.title,
+          citation: citationInput || summary.citation,
+          summary: summary.facts.substring(0, 200) + '...',
+          facts: summary.facts,
+          issues: summary.issues,
+          ruling: summary.ruling,
+          analysis: summary.analysis,
+          tags: 'ai-generated,summary'
+        })
+      });
+      if (res.ok) {
+        alert("Summary saved to Document Library successfully!");
+      } else {
+        alert("Failed to save summary.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("An error occurred while saving.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1867,12 +2090,21 @@ Generated by LexPH AI Case Summarizer
                     <h2 className="text-2xl font-serif font-bold text-slate-900 leading-tight">Case Summary</h2>
                     <p className="text-xs font-mono text-slate-400 uppercase tracking-widest">Philippine Supreme Court Decision</p>
                   </div>
-                  <button 
-                    onClick={exportSummary}
-                    className="text-xs font-mono text-slate-400 hover:text-slate-900 flex items-center gap-1 shrink-0 px-3 py-1.5 border border-slate-100 rounded-lg hover:bg-slate-50 transition-all"
-                  >
-                    <Download size={14} /> EXPORT MD
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={saveToLibrary}
+                      disabled={loading}
+                      className="text-xs font-mono text-indigo-600 hover:text-indigo-800 flex items-center gap-1 shrink-0 px-3 py-1.5 border border-indigo-100 rounded-lg hover:bg-indigo-50 transition-all"
+                    >
+                      <Save size={14} /> SAVE TO LIBRARY
+                    </button>
+                    <button 
+                      onClick={exportSummary}
+                      className="text-xs font-mono text-slate-400 hover:text-slate-900 flex items-center gap-1 shrink-0 px-3 py-1.5 border border-slate-100 rounded-lg hover:bg-slate-50 transition-all"
+                    >
+                      <Download size={14} /> EXPORT MD
+                    </button>
+                  </div>
                 </div>
 
                 <div className="space-y-6">
@@ -1997,24 +2229,38 @@ const WorkflowCenter = () => {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       
       if (activeWorkflow === 'case-analysis') {
-        addLog("Agent: Analyzing material facts...", 'agent');
-        await new Promise(r => setTimeout(r, 1500));
+        addLog("Agent: Analyzing material facts and identifying legal issues...", 'agent');
+        const analysisResponse = await ai.models.generateContent({
+          model: "gemini-3.1-pro-preview",
+          contents: `Analyze the following case facts and identify the key legal issues and applicable laws in the Philippines: ${input}`,
+        });
+        addLog("Facts analyzed and issues identified.", 'success');
         
-        addLog("Agent: Searching Philippine jurisprudence for precedents...", 'agent');
+        addLog("Agent: Searching Philippine jurisprudence for relevant precedents...", 'agent');
         const searchResponse = await ai.models.generateContent({
           model: "gemini-3.1-pro-preview",
-          contents: `Find relevant Philippine Supreme Court cases for these facts: ${input}`,
+          contents: `Search for Philippine Supreme Court cases relevant to these legal issues: ${analysisResponse.text}`,
           config: { tools: [{ googleSearch: {} }] }
         });
-        addLog("Found relevant precedents.", 'success');
+        addLog("Found relevant jurisprudence and precedents.", 'success');
 
-        addLog("Agent: Calculating win probability and risks...", 'agent');
-        await new Promise(r => setTimeout(r, 1500));
+        addLog("Agent: Predicting case outcome and assessing risks...", 'agent');
+        const predictionResponse = await ai.models.generateContent({
+          model: "gemini-3.1-pro-preview",
+          contents: `Based on the facts: ${input}, and the jurisprudence found: ${searchResponse.text}, predict the likely outcome of this case in a Philippine court. Include a win probability and a list of major legal risks.`,
+        });
+        addLog("Outcome predicted and risks assessed.", 'success');
 
         addLog("Agent: Synthesizing final legal memorandum...", 'agent');
         const finalResponse = await ai.models.generateContent({
           model: "gemini-3.1-pro-preview",
-          contents: `Based on these facts: ${input}. And these research results: ${searchResponse.text}. Draft a formal legal memorandum.`,
+          contents: `Draft a formal legal memorandum for a senior partner. 
+          Facts: ${input}
+          Issues & Analysis: ${analysisResponse.text}
+          Jurisprudence: ${searchResponse.text}
+          Prediction & Strategy: ${predictionResponse.text}
+          
+          The memorandum should be professional, structured, and cite relevant Philippine laws and cases.`,
           config: { thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH } }
         });
         
@@ -2470,6 +2716,12 @@ export default function App() {
             onClick={() => setActiveView('summarizer')} 
           />
           <SidebarItem 
+            icon={Book} 
+            label="Statutes & Regulations" 
+            active={activeView === 'statutes'} 
+            onClick={() => setActiveView('statutes')} 
+          />
+          <SidebarItem 
             icon={BarChart3} 
             label="Predictive Analytics" 
             active={activeView === 'analytics'} 
@@ -2520,11 +2772,13 @@ export default function App() {
                 onViewAllJurisprudence={() => setActiveView('jurisprudence')} 
                 onViewAnalytics={() => setActiveView('analytics')}
                 onViewWorkflows={() => setActiveView('workflows')}
+                onViewStatutes={() => setActiveView('statutes')}
               />
             )}
             {activeView === 'jurisprudence' && <JurisprudenceBrowser />}
             {activeView === 'research' && <ResearchAssistant />}
             {activeView === 'summarizer' && <CaseSummarizer />}
+            {activeView === 'statutes' && <StatuteSearch />}
             {activeView === 'analytics' && <PredictiveAnalytics />}
             {activeView === 'knowledge' && <KnowledgeBase />}
             {activeView === 'library' && <DocumentLibrary />}
