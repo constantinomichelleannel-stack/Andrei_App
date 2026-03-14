@@ -38,7 +38,10 @@ import {
   Book,
   Calendar,
   Filter,
-  Tag
+  Tag,
+  Info,
+  RotateCcw,
+  ArrowUpDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ViewType, Note, LegalDocument, CaseSummary, LegalPrediction } from './types';
@@ -121,7 +124,9 @@ const Dashboard = ({
             <span className="text-xs font-mono text-slate-400">WIN PROBABILITY (AVG)</span>
           </div>
           <div className="text-4xl font-serif font-bold text-slate-900">74%</div>
-          <p className="text-sm text-slate-500 mt-2">Based on predictive models</p>
+          <p className="text-sm text-emerald-600 mt-2 flex items-center gap-1">
+            <TrendingUp size={14} /> +3.2% from last week
+          </p>
         </div>
       </div>
 
@@ -184,7 +189,7 @@ const Dashboard = ({
   );
 };
 
-const DocumentLibrary = () => {
+const DocumentLibrary = ({ onSummarize }: { onSummarize?: (text: string, citation?: string) => void }) => {
   const [documents, setDocuments] = useState<LegalDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
@@ -206,7 +211,12 @@ const DocumentLibrary = () => {
   const [sizeFilter, setSizeFilter] = useState<'all' | 'small' | 'medium' | 'large'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'processing' | 'failed'>('all');
   const [tagFilter, setTagFilter] = useState<string>('all');
+  const [citationFilter, setCitationFilter] = useState<'all' | 'valid' | 'caution' | 'invalid' | 'unchecked'>('all');
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'size-desc' | 'size-asc' | 'title'>('newest');
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedVersionDoc, setSelectedVersionDoc] = useState<LegalDocument | null>(null);
+  const [isUploadingVersion, setIsUploadingVersion] = useState(false);
+  const [versionFile, setVersionFile] = useState<File | null>(null);
 
   const fetchDocuments = async () => {
     try {
@@ -449,6 +459,44 @@ const DocumentLibrary = () => {
     }
   };
 
+  const handleUploadVersion = async (docId: number) => {
+    if (!versionFile) return;
+    setIsUploadingVersion(true);
+    const formData = new FormData();
+    formData.append('file', versionFile);
+
+    try {
+      const res = await fetch(`/api/documents/${docId}/version`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (res.ok) {
+        setVersionFile(null);
+        setSelectedVersionDoc(null);
+        fetchDocuments();
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsUploadingVersion(false);
+    }
+  };
+
+  const handleRevert = async (docId: number, versionId: number) => {
+    if (!confirm('Are you sure you want to revert to this version? The current version will be saved in history.')) return;
+    try {
+      const res = await fetch(`/api/documents/${docId}/revert/${versionId}`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        setSelectedVersionDoc(null);
+        fetchDocuments();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const highlightText = (text: string, query: string) => {
     if (!query.trim()) return text;
     const parts = text.split(new RegExp(`(${query})`, 'gi'));
@@ -483,7 +531,7 @@ const DocumentLibrary = () => {
       results = fuse.search(searchQuery).map(result => result.item);
     }
 
-    return results.filter(doc => {
+    const filtered = results.filter(doc => {
       const matchesType = filter === 'all' || doc.type === filter;
       
       const docDate = new Date(doc.uploaded_at);
@@ -492,15 +540,26 @@ const DocumentLibrary = () => {
       
       const matchesStatus = statusFilter === 'all' || doc.status === statusFilter;
       const matchesTag = tagFilter === 'all' || (Array.isArray(doc.tags) && doc.tags.includes(tagFilter));
+      const matchesCitation = citationFilter === 'all' || (doc.citation_check && doc.citation_check.status === citationFilter) || (citationFilter === 'unchecked' && !doc.citation_check);
 
       let matchesSize = true;
       if (sizeFilter === 'small') matchesSize = (doc.size || 0) < 1024 * 1024; // < 1MB
       else if (sizeFilter === 'medium') matchesSize = (doc.size || 0) >= 1024 * 1024 && (doc.size || 0) < 10 * 1024 * 1024; // 1MB - 10MB
       else if (sizeFilter === 'large') matchesSize = (doc.size || 0) >= 10 * 1024 * 1024; // > 10MB
       
-      return matchesType && matchesStartDate && matchesEndDate && matchesStatus && matchesSize && matchesTag;
+      return matchesType && matchesStartDate && matchesEndDate && matchesStatus && matchesSize && matchesTag && matchesCitation;
     });
-  }, [documents, searchQuery, filter, startDate, endDate, sizeFilter, statusFilter, tagFilter, fuse]);
+
+    // Sorting logic
+    return [...filtered].sort((a, b) => {
+      if (sortBy === 'newest') return new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime();
+      if (sortBy === 'oldest') return new Date(a.uploaded_at).getTime() - new Date(b.uploaded_at).getTime();
+      if (sortBy === 'size-desc') return (b.size || 0) - (a.size || 0);
+      if (sortBy === 'size-asc') return (a.size || 0) - (b.size || 0);
+      if (sortBy === 'title') return a.title.localeCompare(b.title);
+      return 0;
+    });
+  }, [documents, searchQuery, filter, startDate, endDate, sizeFilter, statusFilter, tagFilter, citationFilter, sortBy, fuse]);
 
   return (
     <div className="space-y-8">
@@ -699,6 +758,54 @@ const DocumentLibrary = () => {
                     ))}
                   </select>
                 </div>
+
+                <div className="flex items-center gap-2">
+                  <ShieldAlert size={14} className="text-slate-400" />
+                  <select 
+                    value={citationFilter}
+                    onChange={(e) => setCitationFilter(e.target.value as any)}
+                    className="text-xs font-medium bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  >
+                    <option value="all">All Citations</option>
+                    <option value="valid">Valid Only</option>
+                    <option value="caution">Caution Only</option>
+                    <option value="invalid">Invalid Only</option>
+                    <option value="unchecked">Unchecked</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <ArrowUpDown size={14} className="text-slate-400" />
+                  <select 
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as any)}
+                    className="text-xs font-medium bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  >
+                    <option value="newest">Newest First</option>
+                    <option value="oldest">Oldest First</option>
+                    <option value="size-desc">Size (Large to Small)</option>
+                    <option value="size-asc">Size (Small to Large)</option>
+                    <option value="title">Title (A-Z)</option>
+                  </select>
+                </div>
+
+                <button 
+                  onClick={() => {
+                    setFilter('all');
+                    setStartDate('');
+                    setEndDate('');
+                    setSizeFilter('all');
+                    setStatusFilter('all');
+                    setTagFilter('all');
+                    setCitationFilter('all');
+                    setSortBy('newest');
+                    setSearchQuery('');
+                  }}
+                  className="text-xs text-slate-400 hover:text-slate-600 font-medium flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-100 transition-all"
+                  title="Reset all filters"
+                >
+                  <RotateCcw size={12} /> Reset
+                </button>
               </div>
             </div>
 
@@ -813,11 +920,14 @@ const DocumentLibrary = () => {
                             </span>
                           )}
                           {doc.citation_check && (
-                            <span className={`flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter ${
-                              doc.citation_check.status === 'valid' ? 'bg-emerald-100 text-emerald-700' :
-                              doc.citation_check.status === 'caution' ? 'bg-amber-100 text-amber-700' :
-                              'bg-red-100 text-red-700'
-                            }`}>
+                            <span 
+                              title={doc.citation_check.analysis}
+                              className={`flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter border cursor-help ${
+                                doc.citation_check.status === 'valid' ? 'bg-green-100 text-green-700 border-green-200' :
+                                doc.citation_check.status === 'caution' ? 'bg-amber-100 text-amber-700 border-amber-200' :
+                                'bg-red-100 text-red-700 border-red-200'
+                              }`}
+                            >
                               {doc.citation_check.status === 'valid' ? <Check size={10} /> : 
                                doc.citation_check.status === 'caution' ? <ShieldAlert size={10} /> : 
                                <X size={10} />}
@@ -825,6 +935,19 @@ const DocumentLibrary = () => {
                             </span>
                           )}
                         </div>
+                        {doc.citation_check && doc.citation_check.status !== 'valid' && (
+                          <div className={`text-[10px] mt-2 p-2 rounded-lg border flex items-start gap-2 max-w-md ${
+                            doc.citation_check.status === 'caution' 
+                              ? 'bg-amber-50 border-amber-100 text-amber-700' 
+                              : 'bg-red-50 border-red-100 text-red-700'
+                          }`}>
+                            <Info size={12} className="mt-0.5 shrink-0" />
+                            <div>
+                              <span className="font-bold uppercase text-[8px] block mb-0.5">Citation Analysis:</span>
+                              <p className="italic leading-tight">{doc.citation_check.analysis}</p>
+                            </div>
+                          </div>
+                        )}
                         {doc.tags && doc.tags.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-1 mb-1">
                             {doc.tags.map((tag, idx) => (
@@ -869,6 +992,40 @@ const DocumentLibrary = () => {
                     </div>
                     <div className="flex items-center gap-2">
                       <button 
+                        onClick={() => setSelectedVersionDoc(doc)}
+                        className="p-2 text-slate-400 hover:text-indigo-600 transition-colors relative"
+                        title="Version History"
+                      >
+                        <History size={20} />
+                        {doc.version && doc.version > 1 && (
+                          <span className="absolute top-0 right-0 w-4 h-4 bg-indigo-500 text-white text-[8px] flex items-center justify-center rounded-full border-2 border-white">
+                            {doc.version}
+                          </span>
+                        )}
+                      </button>
+                      <button 
+                        onClick={async () => {
+                          if (onSummarize) {
+                            // Fetch content if not already available
+                            try {
+                              const res = await fetch(`/api/documents/preview/${doc.filename}`);
+                              const data = await res.json();
+                              if (data.content) {
+                                onSummarize(data.content, doc.citation);
+                              } else {
+                                onSummarize(doc.summary || '', doc.citation);
+                              }
+                            } catch (err) {
+                              onSummarize(doc.summary || '', doc.citation);
+                            }
+                          }
+                        }}
+                        className="p-2 text-slate-400 hover:text-indigo-600 transition-colors"
+                        title="AI Summarize"
+                      >
+                        <Zap size={20} />
+                      </button>
+                      <button 
                         onClick={() => handlePreview(doc)}
                         className="p-2 text-slate-400 hover:text-indigo-600 transition-colors"
                         title="Preview"
@@ -893,6 +1050,106 @@ const DocumentLibrary = () => {
 
       {/* Preview Modal */}
       <AnimatePresence>
+        {selectedVersionDoc && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div>
+                  <h3 className="text-xl font-serif font-bold text-slate-900">Version History</h3>
+                  <p className="text-sm text-slate-500">{selectedVersionDoc.title}</p>
+                </div>
+                <button 
+                  onClick={() => setSelectedVersionDoc(null)}
+                  className="p-2 text-slate-400 hover:text-slate-900 transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-xl">
+                  <h4 className="text-xs font-mono text-indigo-600 uppercase tracking-widest mb-3 font-bold">Current Version (v{selectedVersionDoc.version})</h4>
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm">
+                      <p className="font-medium text-slate-900">{selectedVersionDoc.filename}</p>
+                      <p className="text-slate-500 text-xs">{new Date(selectedVersionDoc.uploaded_at).toLocaleString()}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="cursor-pointer px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors">
+                        <Upload size={12} className="inline mr-1" /> New Version
+                        <input 
+                          type="file" 
+                          className="hidden" 
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) setVersionFile(file);
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                  {versionFile && (
+                    <div className="mt-3 flex items-center justify-between p-2 bg-white rounded-lg border border-indigo-200">
+                      <span className="text-xs text-slate-600 truncate max-w-[200px]">{versionFile.name}</span>
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => handleUploadVersion(selectedVersionDoc.id)}
+                          disabled={isUploadingVersion}
+                          className="text-xs text-emerald-600 font-bold hover:text-emerald-700"
+                        >
+                          {isUploadingVersion ? 'Uploading...' : 'Confirm'}
+                        </button>
+                        <button 
+                          onClick={() => setVersionFile(null)}
+                          className="text-xs text-red-500 font-bold"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="text-xs font-mono text-slate-400 uppercase tracking-widest px-2">Previous Versions</h4>
+                  {(!selectedVersionDoc.versions || selectedVersionDoc.versions.length === 0) ? (
+                    <p className="text-sm text-slate-400 italic text-center py-4">No previous versions available.</p>
+                  ) : (
+                    selectedVersionDoc.versions.map((v) => (
+                      <div key={v.id} className="flex items-center justify-between p-4 border border-slate-100 rounded-xl hover:bg-slate-50 transition-colors">
+                        <div>
+                          <p className="text-sm font-medium text-slate-900">Version {v.version}</p>
+                          <p className="text-xs text-slate-500">{new Date(v.uploaded_at).toLocaleString()} • {(v.size / 1024).toFixed(1)} KB</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => handleRevert(selectedVersionDoc.id, v.id)}
+                            className="px-3 py-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg text-xs font-bold transition-colors"
+                          >
+                            Revert
+                          </button>
+                          <a 
+                            href={`/api/documents/download/${v.filename}`}
+                            className="p-2 text-slate-400 hover:text-slate-900 transition-colors"
+                            title="Download this version"
+                          >
+                            <Download size={16} />
+                          </a>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {previewDoc && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
             <motion.div 
@@ -967,12 +1224,12 @@ const DocumentLibrary = () => {
 
                     {previewDoc.citation_check && (
                       <div className={`p-6 rounded-xl border ${
-                        previewDoc.citation_check.status === 'valid' ? 'bg-emerald-50 border-emerald-100' :
+                        previewDoc.citation_check.status === 'valid' ? 'bg-green-50 border-green-100' :
                         previewDoc.citation_check.status === 'caution' ? 'bg-amber-50 border-amber-100' :
                         'bg-red-50 border-red-100'
                       }`}>
                         <h4 className={`font-bold mb-2 flex items-center gap-2 ${
-                          previewDoc.citation_check.status === 'valid' ? 'text-emerald-900' :
+                          previewDoc.citation_check.status === 'valid' ? 'text-green-900' :
                           previewDoc.citation_check.status === 'caution' ? 'text-amber-900' :
                           'text-red-900'
                         }`}>
@@ -982,7 +1239,7 @@ const DocumentLibrary = () => {
                           Citation Validity Check: {previewDoc.citation_check.status.toUpperCase()}
                         </h4>
                         <p className={`text-sm ${
-                          previewDoc.citation_check.status === 'valid' ? 'text-emerald-700' :
+                          previewDoc.citation_check.status === 'valid' ? 'text-green-700' :
                           previewDoc.citation_check.status === 'caution' ? 'text-amber-700' :
                           'text-red-700'
                         }`}>
@@ -1001,6 +1258,19 @@ const DocumentLibrary = () => {
                 >
                   Close
                 </button>
+                {previewContent && (
+                  <button 
+                    onClick={() => {
+                      if (onSummarize) {
+                        onSummarize(previewContent, previewDoc.citation);
+                        setPreviewDoc(null);
+                      }
+                    }}
+                    className="px-6 py-2 bg-indigo-50 text-indigo-600 rounded-xl font-bold hover:bg-indigo-100 transition-all flex items-center gap-2"
+                  >
+                    <Zap size={18} /> AI Summarize
+                  </button>
+                )}
                 <a 
                   href={`/api/documents/download/${previewDoc.filename}`}
                   className="px-6 py-2 bg-slate-900 text-white rounded-xl font-bold shadow-lg hover:bg-slate-800 transition-all flex items-center gap-2"
@@ -1120,7 +1390,7 @@ const ResearchAssistant = () => {
       } else if (researchMode === 'article') {
         systemPrompt += " Focus on retrieving and analyzing legal articles, scholarly journals, and expert commentaries. Provide a synthesis of different legal perspectives on the topic.";
       } else if (researchMode === 'summarizer') {
-        systemPrompt += " You are a Case Summarizer. Your task is to provide a highly structured and precise summary of the provided case text or citation. You MUST include the following sections: 1. Case Title & Citation, 2. Facts (concise narrative), 3. Issues (legal questions addressed), 4. Ruling (the court's decision), and 5. Legal Analysis (the rationale and principles applied). Use professional legal terminology.";
+        systemPrompt += " You are a Case Summarizer for Philippine Law. Your task is to provide a highly structured and precise summary of the provided case text or citation. You MUST include the following sections: 1. Case Title & Citation (G.R. Number), 2. Facts (concise narrative), 3. Issues (legal questions addressed), 4. Ruling (the court's decision and ratio decidendi), and 5. Legal Analysis (the specific doctrine established and its implications for Philippine jurisprudence). Use professional legal terminology.";
       }
 
       const response = await ai.models.generateContent({
@@ -1452,10 +1722,14 @@ const ResearchAssistant = () => {
 const PredictiveAnalytics = () => {
   const [facts, setFacts] = useState('');
   const [prediction, setPrediction] = useState<LegalPrediction | null>(null);
+  const [previousProbability, setPreviousProbability] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
 
   const handlePredict = async () => {
     if (!facts.trim()) return;
+    if (prediction) {
+      setPreviousProbability(prediction.probability);
+    }
     setLoading(true);
     setPrediction(null);
 
@@ -1469,7 +1743,8 @@ const PredictiveAnalytics = () => {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       const response = await ai.models.generateContent({
         model: "gemini-3.1-pro-preview",
-        contents: `As a legal predictive analytics tool for Philippine Law, analyze the following case facts and predict the likely outcome based on current jurisprudence and legal principles. 
+        contents: `As a legal predictive analytics tool for Philippine Law, analyze the following case facts. 
+        Identify the key legal issues involved and predict the likely outcome based on current jurisprudence and legal principles. 
         
         Case Facts: ${facts}`,
         config: {
@@ -1478,12 +1753,14 @@ const PredictiveAnalytics = () => {
             type: Type.OBJECT,
             properties: {
               probability: { type: Type.NUMBER, description: "Probability of success as a percentage (0-100)" },
+              legalIssues: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Key legal issues identified" },
+              likelyOutcome: { type: Type.STRING, description: "A concise summary of the likely judicial outcome" },
               strengths: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Key legal strengths" },
               risks: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Potential risks or weaknesses" },
               strategy: { type: Type.STRING, description: "Recommended legal strategy" },
               analysis: { type: Type.STRING, description: "Detailed legal analysis and reasoning" },
             },
-            required: ["probability", "strengths", "risks", "strategy", "analysis"],
+            required: ["probability", "legalIssues", "likelyOutcome", "strengths", "risks", "strategy", "analysis"],
           }
         },
       });
@@ -1596,6 +1873,11 @@ const PredictiveAnalytics = () => {
                     </svg>
                     <div className="absolute inset-0 flex flex-col items-center justify-center">
                       <span className="text-4xl font-serif font-bold text-slate-900">{prediction.probability}%</span>
+                      {previousProbability !== null && (
+                        <div className={`flex items-center gap-0.5 text-[10px] font-bold ${prediction.probability >= previousProbability ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {prediction.probability >= previousProbability ? '+' : ''}{prediction.probability - previousProbability}%
+                        </div>
+                      )}
                       <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">WIN PROBABILITY</span>
                     </div>
                   </div>
@@ -1605,9 +1887,25 @@ const PredictiveAnalytics = () => {
                       <TrendingUp size={14} /> Prediction Analysis
                     </div>
                     <h2 className="text-2xl font-serif font-bold text-slate-900 leading-tight">Likely Judicial Outcome</h2>
-                    <p className="text-slate-600 text-sm leading-relaxed italic">
+                    <p className="text-slate-900 text-sm font-medium leading-relaxed italic bg-slate-50 p-3 rounded-lg border-l-4 border-slate-900">
+                      {prediction.likelyOutcome}
+                    </p>
+                    <p className="text-slate-500 text-xs leading-relaxed">
                       Based on current Philippine jurisprudence and similar case patterns, the probability of a favorable ruling is estimated at {prediction.probability}%.
                     </p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h3 className="text-xs font-mono text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                    <Gavel size={16} /> Key Legal Issues
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {prediction.legalIssues.map((issue, i) => (
+                      <div key={i} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 font-medium">
+                        {issue}
+                      </div>
+                    ))}
                   </div>
                 </div>
 
@@ -1840,12 +2138,25 @@ const StatuteSearch = () => {
   );
 };
 
-const CaseSummarizer = () => {
-  const [caseText, setCaseText] = useState('');
-  const [citationInput, setCitationInput] = useState('');
+const CaseSummarizer = ({ 
+  initialText, 
+  initialCitation,
+  onClear
+}: { 
+  initialText?: string, 
+  initialCitation?: string,
+  onClear?: () => void
+}) => {
+  const [caseText, setCaseText] = useState(initialText || '');
+  const [citationInput, setCitationInput] = useState(initialCitation || '');
   const [summary, setSummary] = useState<CaseSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [searchMode, setSearchMode] = useState(false);
+
+  useEffect(() => {
+    if (initialText) setCaseText(initialText);
+    if (initialCitation) setCitationInput(initialCitation);
+  }, [initialText, initialCitation]);
 
   const sampleCase = `G.R. No. 135981. January 15, 2004.
 PEOPLE OF THE PHILIPPINES, appellee, vs. MARIVIC GENOSA, appellant.
@@ -1893,13 +2204,19 @@ The trial court convicted her of parricide and sentenced her to death. On appeal
 
       if (useSearch) {
         prompt = `Search for the full text of the Philippine Supreme Court case: ${citationInput}. 
-        Once found, provide a detailed legal summary. 
-        Extract the Case Title, Case Citation, Facts, Issues, Ruling, and a brief Legal Analysis.`;
+        Once found, provide a comprehensive legal summary tailored for Philippine legal practice. 
+        Extract the following:
+        1. Case Title
+        2. Case Citation (G.R. Number and Date)
+        3. Facts (Concise but complete narrative of the dispute)
+        4. Issues (The specific legal questions resolved by the Court)
+        5. Ruling (The Court's decision and the ratio decidendi)
+        6. Legal Analysis (The specific doctrine or legal principle established, and its implications for Philippine jurisprudence).`;
         config.tools = [{ googleSearch: {} }];
         config.thinkingConfig = { thinkingLevel: ThinkingLevel.HIGH };
       } else {
         prompt = `Please provide a detailed legal summary of the following Philippine Supreme Court decision. 
-        Extract the Case Title, Case Citation (G.R. Number), Facts, Issues, Ruling, and a brief Legal Analysis highlighting key legal principles and their implications.
+        Extract the Case Title, Case Citation (G.R. Number), Facts, Issues, Ruling, and a brief Legal Analysis highlighting the specific doctrine or legal principle established by the Court and its implications for Philippine jurisprudence.
         
         Case Text: ${caseText}`;
       }
@@ -2046,7 +2363,12 @@ Generated by LexPH AI Case Summarizer
                 </button>
               </div>
               <button 
-                onClick={() => { setCaseText(''); setCitationInput(''); setSummary(null); }}
+                onClick={() => { 
+                  setCaseText(''); 
+                  setCitationInput(''); 
+                  setSummary(null); 
+                  if (onClear) onClear();
+                }}
                 className="w-full py-3 border border-slate-200 text-slate-600 rounded-xl font-medium hover:bg-slate-50 transition-colors"
               >
                 Clear All
@@ -2678,6 +3000,12 @@ const KnowledgeBase = () => {
 
 export default function App() {
   const [activeView, setActiveView] = useState<ViewType>('dashboard');
+  const [summarizerInitialData, setSummarizerInitialData] = useState<{text: string, citation?: string} | null>(null);
+
+  const handleSummarizeFromLibrary = (text: string, citation?: string) => {
+    setSummarizerInitialData({ text, citation });
+    setActiveView('summarizer');
+  };
 
   return (
     <div className="flex min-h-screen bg-[#F8F9FA]">
@@ -2777,11 +3105,17 @@ export default function App() {
             )}
             {activeView === 'jurisprudence' && <JurisprudenceBrowser />}
             {activeView === 'research' && <ResearchAssistant />}
-            {activeView === 'summarizer' && <CaseSummarizer />}
+            {activeView === 'summarizer' && (
+              <CaseSummarizer 
+                initialText={summarizerInitialData?.text} 
+                initialCitation={summarizerInitialData?.citation}
+                onClear={() => setSummarizerInitialData(null)}
+              />
+            )}
             {activeView === 'statutes' && <StatuteSearch />}
             {activeView === 'analytics' && <PredictiveAnalytics />}
             {activeView === 'knowledge' && <KnowledgeBase />}
-            {activeView === 'library' && <DocumentLibrary />}
+            {activeView === 'library' && <DocumentLibrary onSummarize={handleSummarizeFromLibrary} />}
             {activeView === 'workflows' && <WorkflowCenter />}
             {activeView === 'settings' && (
               <div className="max-w-2xl">

@@ -6,6 +6,16 @@ export interface Note {
   created_at: string;
 }
 
+export interface DocumentVersion {
+  id: number;
+  document_id: number;
+  filename: string;
+  version: number;
+  size: number;
+  uploaded_at: string;
+  summary: string;
+}
+
 export interface LegalDocument {
   id: number;
   filename: string;
@@ -21,6 +31,8 @@ export interface LegalDocument {
     status: 'valid' | 'caution' | 'invalid' | 'unchecked';
     analysis: string;
   };
+  version?: number;
+  versions?: DocumentVersion[];
 }
 
 export type ViewType = 'dashboard' | 'research' | 'knowledge' | 'library' | 'analytics' | 'summarizer' | 'settings' | 'jurisprudence' | 'workflows' | 'statutes';
@@ -40,4 +52,6 @@ export interface LegalPrediction {
   risks: string[];
   strategy: string;
   analysis: string;
+  legalIssues: string[];
+  likelyOutcome: string;
 }
