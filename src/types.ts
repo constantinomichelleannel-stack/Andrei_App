@@ -55,3 +55,17 @@ export interface LegalPrediction {
   legalIssues: string[];
   likelyOutcome: string;
 }
+
+export interface SavedSearch {
+  id: string;
+  name: string;
+  query: string;
+  filter: 'all' | 'case' | 'statute' | 'memo';
+  startDate: string;
+  endDate: string;
+  sizeFilter: 'all' | 'small' | 'medium' | 'large';
+  statusFilter: 'all' | 'completed' | 'processing' | 'failed';
+  tagFilter: string;
+  citationFilter: 'all' | 'valid' | 'caution' | 'invalid' | 'unchecked';
+  sortBy: 'newest' | 'oldest' | 'size-desc' | 'size-asc' | 'title';
+}

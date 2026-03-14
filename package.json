@@ -27,7 +27,8 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "zustand": "^5.0.11"
   },
   "devDependencies": {
     "@types/archiver": "^7.0.0",

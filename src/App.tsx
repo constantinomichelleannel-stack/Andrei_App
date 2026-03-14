@@ -28,6 +28,7 @@ import {
   Eye,
   X,
   Trash2,
+  Edit2,
   CheckSquare,
   Square,
   Check,
@@ -41,10 +42,12 @@ import {
   Tag,
   Info,
   RotateCcw,
-  ArrowUpDown
+  ArrowUpDown,
+  Bookmark
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ViewType, Note, LegalDocument, CaseSummary, LegalPrediction } from './types';
+import { useDocumentStore } from './store';
 import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import Markdown from 'react-markdown';
 
@@ -84,8 +87,36 @@ const Dashboard = ({
     <div className="space-y-6">
       <header>
         <h1 className="text-3xl font-serif font-bold text-slate-900">LexPH Dashboard</h1>
-        <p className="text-slate-500">Agentic Legal Intelligence for Private Practice</p>
+        <p className="text-slate-500">Agentic Legal Intelligence Framework</p>
       </header>
+
+      <div className="legal-card p-8 bg-indigo-900 text-white relative overflow-hidden">
+        <div className="relative z-10 max-w-3xl">
+          <h2 className="text-xl font-serif font-bold mb-4 flex items-center gap-2">
+            <BrainCircuit size={24} className="text-indigo-300" /> Research Framework: Agentic AI in Legal Practice
+          </h2>
+          <p className="text-indigo-100 leading-relaxed text-sm italic">
+            "This research assesses the impact of Agentic AI and its associated technologies in providing legal research towards automation. 
+            It evaluates the ability to enhance internal knowledge diffusion and data-driven decision making through advanced predictive analytics. 
+            Exclusively focused on private legal practice, the study assesses how agentic and fully autonomous machine workflows enhance operational 
+            and client service efficiency, thereby increasing the competitiveness of the practice."
+          </p>
+          <div className="mt-6 flex flex-wrap gap-4">
+            <div className="flex items-center gap-2 text-xs font-mono bg-white/10 px-3 py-1.5 rounded-full">
+              <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" /> AI Research Assistant
+            </div>
+            <div className="flex items-center gap-2 text-xs font-mono bg-white/10 px-3 py-1.5 rounded-full">
+              <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" /> Knowledge Management Portal
+            </div>
+            <div className="flex items-center gap-2 text-xs font-mono bg-white/10 px-3 py-1.5 rounded-full">
+              <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" /> Advanced Predictive Analytics
+            </div>
+          </div>
+        </div>
+        <div className="absolute top-0 right-0 -translate-y-1/2 translate-x-1/4 opacity-10">
+          <BrainCircuit size={300} />
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="legal-card p-6 bg-slate-900 text-white">
@@ -190,8 +221,23 @@ const Dashboard = ({
 };
 
 const DocumentLibrary = ({ onSummarize }: { onSummarize?: (text: string, citation?: string) => void }) => {
-  const [documents, setDocuments] = useState<LegalDocument[]>([]);
-  const [loading, setLoading] = useState(true);
+  const {
+    documents, setDocuments,
+    loading, setLoading,
+    searchQuery, setSearchQuery,
+    filter, setFilter,
+    startDate, setStartDate,
+    endDate, setEndDate,
+    sizeFilter, setSizeFilter,
+    statusFilter, setStatusFilter,
+    tagFilter, setTagFilter,
+    citationFilter, setCitationFilter,
+    sortBy, setSortBy,
+    selectedIds, setSelectedIds,
+    resetFilters,
+    savedSearches, addSavedSearch, removeSavedSearch, applySavedSearch
+  } = useDocumentStore();
+
   const [isUploading, setIsUploading] = useState(false);
   const [title, setTitle] = useState('');
   const [citation, setCitation] = useState('');
@@ -199,24 +245,29 @@ const DocumentLibrary = ({ onSummarize }: { onSummarize?: (text: string, citatio
   const [tags, setTags] = useState('');
   const [manualSummary, setManualSummary] = useState('');
   const [file, setFile] = useState<File | null>(null);
-  const [filter, setFilter] = useState<'all' | 'case' | 'statute' | 'memo'>('all');
   const [previewDoc, setPreviewDoc] = useState<LegalDocument | null>(null);
   const [previewContent, setPreviewContent] = useState<string | null>(null);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
   const [isBatchDownloading, setIsBatchDownloading] = useState(false);
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [sizeFilter, setSizeFilter] = useState<'all' | 'small' | 'medium' | 'large'>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'processing' | 'failed'>('all');
-  const [tagFilter, setTagFilter] = useState<string>('all');
-  const [citationFilter, setCitationFilter] = useState<'all' | 'valid' | 'caution' | 'invalid' | 'unchecked'>('all');
-  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'size-desc' | 'size-asc' | 'title'>('newest');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [isBatchCheckingCitations, setIsBatchCheckingCitations] = useState(false);
+  const [isBatchEditing, setIsBatchEditing] = useState(false);
+  const [batchEditTitle, setBatchEditTitle] = useState('');
+  const [batchEditCitation, setBatchEditCitation] = useState('');
+  const [batchEditTags, setBatchEditTags] = useState('');
+  const [isBatchUpdating, setIsBatchUpdating] = useState(false);
+  const [editingDoc, setEditingDoc] = useState<LegalDocument | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editCitation, setEditCitation] = useState('');
+  const [editTags, setEditTags] = useState('');
+  const [isUpdating, setIsUpdating] = useState(false);
   const [selectedVersionDoc, setSelectedVersionDoc] = useState<LegalDocument | null>(null);
   const [isUploadingVersion, setIsUploadingVersion] = useState(false);
   const [versionFile, setVersionFile] = useState<File | null>(null);
+  const [isTagSuggestionsVisible, setIsTagSuggestionsVisible] = useState(false);
+  const [isSavingSearch, setIsSavingSearch] = useState(false);
+  const [newSearchName, setNewSearchName] = useState('');
+  const [showSavedSearches, setShowSavedSearches] = useState(false);
 
   const fetchDocuments = async () => {
     try {
@@ -459,6 +510,84 @@ const DocumentLibrary = ({ onSummarize }: { onSummarize?: (text: string, citatio
     }
   };
 
+  const handleBatchCitationCheck = async () => {
+    if (selectedIds.length === 0) return;
+    if (!process.env.GEMINI_API_KEY) {
+      alert("API Key not found. Please add your GEMINI_API_KEY in the Settings > Secrets menu.");
+      return;
+    }
+
+    setIsBatchCheckingCitations(true);
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+    try {
+      for (const id of selectedIds) {
+        const doc = documents.find(d => d.id === id);
+        if (!doc) continue;
+
+        try {
+          // 1. Fetch content
+          const res = await fetch(`/api/documents/preview/${doc.filename}`);
+          const data = await res.json();
+          if (!data.content) continue;
+
+          // 2. Check Citations with Gemini
+          const citationResponse = await ai.models.generateContent({
+            model: "gemini-3.1-pro-preview",
+            contents: [
+              {
+                parts: [
+                  {
+                    text: `Analyze the legal citations in this document. Identify the main citations and check if they are still valid and current (e.g., not overturned, repealed, or amended). Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and 'analysis' (a brief explanation of the validity of the citations found).
+                    
+                    Document Content: ${data.content.substring(0, 30000)}`, // Limit content size for Gemini
+                  },
+                ],
+              },
+            ],
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  status: { 
+                    type: Type.STRING, 
+                    description: "Status of the citations found in the document.",
+                    enum: ['valid', 'caution', 'invalid'] 
+                  },
+                  analysis: { 
+                    type: Type.STRING,
+                    description: "Detailed analysis of the citations."
+                  }
+                },
+                required: ['status', 'analysis']
+              }
+            }
+          });
+
+          if (citationResponse.text) {
+            const citationCheck = JSON.parse(citationResponse.text);
+            
+            // 3. Update metadata
+            await fetch(`/api/documents/${id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ citation_check: citationCheck }),
+            });
+          }
+        } catch (err) {
+          console.error(`Citation check failed for document ${id}:`, err);
+        }
+      }
+      fetchDocuments();
+      setSelectedIds([]);
+    } catch (err) {
+      console.error('Batch citation check error:', err);
+    } finally {
+      setIsBatchCheckingCitations(false);
+    }
+  };
+
   const handleUploadVersion = async (docId: number) => {
     if (!versionFile) return;
     setIsUploadingVersion(true);
@@ -495,6 +624,89 @@ const DocumentLibrary = ({ onSummarize }: { onSummarize?: (text: string, citatio
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingDoc) return;
+
+    setIsUpdating(true);
+    try {
+      const res = await fetch(`/api/documents/${editingDoc.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: editTitle,
+          citation: editCitation,
+          tags: editTags
+        }),
+      });
+      if (res.ok) {
+        setEditingDoc(null);
+        fetchDocuments();
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleBatchUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (selectedIds.length === 0) return;
+
+    setIsBatchUpdating(true);
+    try {
+      const updates = selectedIds.map(id => {
+        const body: any = {};
+        if (batchEditTitle) body.title = batchEditTitle;
+        if (batchEditCitation) body.citation = batchEditCitation;
+        if (batchEditTags) body.tags = batchEditTags;
+        
+        if (Object.keys(body).length === 0) return Promise.resolve();
+
+        return fetch(`/api/documents/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      });
+
+      await Promise.all(updates);
+      setIsBatchEditing(false);
+      setBatchEditTitle('');
+      setBatchEditCitation('');
+      setBatchEditTags('');
+      setSelectedIds([]);
+      fetchDocuments();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsBatchUpdating(false);
+    }
+  };
+
+  const handleSaveSearch = () => {
+    if (!newSearchName.trim()) return;
+    
+    const newSearch = {
+      id: crypto.randomUUID(),
+      name: newSearchName.trim(),
+      query: searchQuery,
+      filter,
+      startDate,
+      endDate,
+      sizeFilter,
+      statusFilter,
+      tagFilter,
+      citationFilter,
+      sortBy
+    };
+    
+    addSavedSearch(newSearch);
+    setNewSearchName('');
+    setIsSavingSearch(false);
   };
 
   const highlightText = (text: string, query: string) => {
@@ -539,7 +751,7 @@ const DocumentLibrary = ({ onSummarize }: { onSummarize?: (text: string, citatio
       const matchesEndDate = !endDate || docDate <= new Date(endDate + 'T23:59:59');
       
       const matchesStatus = statusFilter === 'all' || doc.status === statusFilter;
-      const matchesTag = tagFilter === 'all' || (Array.isArray(doc.tags) && doc.tags.includes(tagFilter));
+      const matchesTag = tagFilter === 'all' || (Array.isArray(doc.tags) && doc.tags.some(t => t.toLowerCase().includes(tagFilter.toLowerCase())));
       const matchesCitation = citationFilter === 'all' || (doc.citation_check && doc.citation_check.status === citationFilter) || (citationFilter === 'unchecked' && !doc.citation_check);
 
       let matchesSize = true;
@@ -663,15 +875,84 @@ const DocumentLibrary = ({ onSummarize }: { onSummarize?: (text: string, citatio
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm"
                 />
-                {searchQuery && (
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                  {searchQuery && (
+                    <button 
+                      onClick={() => setSearchQuery('')}
+                      className="p-1.5 text-slate-400 hover:text-slate-600 transition-colors"
+                      aria-label="Clear search"
+                    >
+                      <X size={16} />
+                    </button>
+                  )}
                   <button 
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
-                    aria-label="Clear search"
+                    onClick={() => setIsSavingSearch(true)}
+                    className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                    title="Save current search"
                   >
-                    <X size={16} />
+                    <Bookmark size={18} />
                   </button>
-                )}
+                  <div className="relative">
+                    <button 
+                      onClick={() => setShowSavedSearches(!showSavedSearches)}
+                      className={`p-1.5 rounded-lg transition-all ${showSavedSearches ? 'text-indigo-600 bg-indigo-50' : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'}`}
+                      title="View saved searches"
+                    >
+                      <History size={18} />
+                    </button>
+                    
+                    <AnimatePresence>
+                      {showSavedSearches && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                          className="absolute right-0 mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 overflow-hidden"
+                        >
+                          <div className="p-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Saved Searches</span>
+                            <button onClick={() => setShowSavedSearches(false)} className="text-slate-400 hover:text-slate-600">
+                              <X size={14} />
+                            </button>
+                          </div>
+                          <div className="max-h-64 overflow-y-auto">
+                            {savedSearches.length === 0 ? (
+                              <div className="p-6 text-center text-xs text-slate-400 italic">
+                                No saved searches yet.
+                              </div>
+                            ) : (
+                              savedSearches.map(search => (
+                                <div 
+                                  key={search.id}
+                                  className="group p-3 border-b border-slate-50 hover:bg-indigo-50/50 transition-colors flex items-center justify-between"
+                                >
+                                  <button 
+                                    onClick={() => {
+                                      applySavedSearch(search);
+                                      setShowSavedSearches(false);
+                                    }}
+                                    className="flex-1 text-left"
+                                  >
+                                    <p className="text-xs font-bold text-slate-900 truncate">{search.name}</p>
+                                    <p className="text-[10px] text-slate-400 truncate">
+                                      {search.query || 'No query'} • {search.filter}
+                                    </p>
+                                  </button>
+                                  <button 
+                                    onClick={() => removeSavedSearch(search.id)}
+                                    className="p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </div>
               </div>
               
               <div className="flex flex-wrap items-center gap-3">
@@ -745,18 +1026,76 @@ const DocumentLibrary = ({ onSummarize }: { onSummarize?: (text: string, citatio
                   </select>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 relative">
                   <Tag size={14} className="text-slate-400" />
-                  <select 
-                    value={tagFilter}
-                    onChange={(e) => setTagFilter(e.target.value)}
-                    className="text-xs font-medium bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 max-w-[150px]"
-                  >
-                    <option value="all">All Tags</option>
-                    {allTags.map(tag => (
-                      <option key={tag} value={tag}>{tag}</option>
-                    ))}
-                  </select>
+                  <div className="relative group">
+                    <input 
+                      type="text"
+                      value={tagFilter === 'all' ? '' : tagFilter}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setTagFilter(val || 'all');
+                        setIsTagSuggestionsVisible(true);
+                      }}
+                      onFocus={() => setIsTagSuggestionsVisible(true)}
+                      onBlur={() => setTimeout(() => setIsTagSuggestionsVisible(false), 200)}
+                      placeholder="Filter by tag..."
+                      className="text-xs font-medium bg-slate-50 border border-slate-100 rounded-lg pl-3 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 w-[150px]"
+                    />
+                    {tagFilter !== 'all' && (
+                      <button 
+                        onClick={() => setTagFilter('all')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                    <AnimatePresence>
+                      {isTagSuggestionsVisible && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: -10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -10 }}
+                          className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-[200px] overflow-y-auto"
+                        >
+                          <div 
+                            className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 bg-slate-50 border-b border-slate-100"
+                          >
+                            Suggestions
+                          </div>
+                          <div 
+                            className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-500 italic border-b border-slate-50"
+                            onClick={() => {
+                              setTagFilter('all');
+                              setIsTagSuggestionsVisible(false);
+                            }}
+                          >
+                            All Tags
+                          </div>
+                          {allTags
+                            .filter(tag => tagFilter === 'all' || tag.toLowerCase().includes(tagFilter.toLowerCase()))
+                            .map(tag => (
+                              <div 
+                                key={tag}
+                                className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 flex items-center justify-between"
+                                onClick={() => {
+                                  setTagFilter(tag);
+                                  setIsTagSuggestionsVisible(false);
+                                }}
+                              >
+                                <span>{tag}</span>
+                                {tagFilter.toLowerCase() === tag.toLowerCase() && <Check size={12} className="text-indigo-600" />}
+                              </div>
+                            ))}
+                          {allTags.filter(tag => tagFilter === 'all' || tag.toLowerCase().includes(tagFilter.toLowerCase())).length === 0 && (
+                            <div className="px-3 py-4 text-center text-xs text-slate-400 italic">
+                              No matching tags
+                            </div>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -790,17 +1129,7 @@ const DocumentLibrary = ({ onSummarize }: { onSummarize?: (text: string, citatio
                 </div>
 
                 <button 
-                  onClick={() => {
-                    setFilter('all');
-                    setStartDate('');
-                    setEndDate('');
-                    setSizeFilter('all');
-                    setStatusFilter('all');
-                    setTagFilter('all');
-                    setCitationFilter('all');
-                    setSortBy('newest');
-                    setSearchQuery('');
-                  }}
+                  onClick={resetFilters}
                   className="text-xs text-slate-400 hover:text-slate-600 font-medium flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-100 transition-all"
                   title="Reset all filters"
                 >
@@ -849,6 +1178,26 @@ const DocumentLibrary = ({ onSummarize }: { onSummarize?: (text: string, citatio
                       </button>
                     </div>
                     <div className="flex items-center gap-3">
+                      <button 
+                        onClick={handleBatchCitationCheck}
+                        disabled={isBatchCheckingCitations}
+                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                      >
+                        {isBatchCheckingCitations ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                            Checking...
+                          </>
+                        ) : (
+                          <><ShieldAlert size={16} /> Check Citations</>
+                        )}
+                      </button>
+                      <button 
+                        onClick={() => setIsBatchEditing(true)}
+                        className="flex items-center gap-2 px-4 py-2 bg-white text-slate-900 border border-slate-200 rounded-lg text-sm font-bold hover:bg-slate-50 transition-colors"
+                      >
+                        <Edit2 size={16} /> Batch Edit
+                      </button>
                       <button 
                         onClick={handleBatchDownload}
                         disabled={isBatchDownloading}
@@ -991,6 +1340,18 @@ const DocumentLibrary = ({ onSummarize }: { onSummarize?: (text: string, citatio
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => {
+                          setEditingDoc(doc);
+                          setEditTitle(doc.title);
+                          setEditCitation(doc.citation || '');
+                          setEditTags(Array.isArray(doc.tags) ? doc.tags.join(', ') : (doc.tags || ''));
+                        }}
+                        className="p-2 text-slate-400 hover:text-indigo-600 transition-colors"
+                        title="Edit Metadata"
+                      >
+                        <Edit2 size={20} />
+                      </button>
                       <button 
                         onClick={() => setSelectedVersionDoc(doc)}
                         className="p-2 text-slate-400 hover:text-indigo-600 transition-colors relative"
@@ -1282,6 +1643,213 @@ const DocumentLibrary = ({ onSummarize }: { onSummarize?: (text: string, citatio
           </div>
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {editingDoc && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                <h3 className="text-xl font-serif font-bold text-slate-900 flex items-center gap-2">
+                  <Edit2 size={20} className="text-indigo-600" /> Edit Metadata
+                </h3>
+                <button onClick={() => setEditingDoc(null)} className="text-slate-400 hover:text-slate-600">
+                  <X size={20} />
+                </button>
+              </div>
+              
+              <form onSubmit={handleUpdate} className="p-6 space-y-4">
+                <div>
+                  <label className="text-xs font-mono text-slate-400 uppercase">Document Title</label>
+                  <input 
+                    type="text" 
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-mono text-slate-400 uppercase">Citation</label>
+                  <input 
+                    type="text" 
+                    value={editCitation}
+                    onChange={(e) => setEditCitation(e.target.value)}
+                    className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-mono text-slate-400 uppercase">Tags (comma-separated)</label>
+                  <input 
+                    type="text" 
+                    value={editTags}
+                    onChange={(e) => setEditTags(e.target.value)}
+                    className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900"
+                  />
+                </div>
+                
+                <div className="pt-4 flex justify-end gap-3">
+                  <button 
+                    type="button"
+                    onClick={() => setEditingDoc(null)}
+                    className="px-4 py-2 text-slate-500 font-bold hover:text-slate-700"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit"
+                    disabled={isUpdating}
+                    className="px-6 py-2 bg-slate-900 text-white rounded-xl font-bold shadow-lg hover:bg-slate-800 transition-all disabled:opacity-50"
+                  >
+                    {isUpdating ? 'Saving...' : 'Save Changes'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isBatchEditing && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                <h3 className="text-xl font-serif font-bold text-slate-900 flex items-center gap-2">
+                  <Edit2 size={20} className="text-indigo-600" /> Batch Edit ({selectedIds.length} items)
+                </h3>
+                <button onClick={() => setIsBatchEditing(false)} className="text-slate-400 hover:text-slate-600">
+                  <X size={20} />
+                </button>
+              </div>
+              
+              <form onSubmit={handleBatchUpdate} className="p-6 space-y-4">
+                <div className="p-3 bg-amber-50 border border-amber-100 rounded-lg text-xs text-amber-800 italic">
+                  Leave fields blank to keep their current values.
+                </div>
+                <div>
+                  <label className="text-xs font-mono text-slate-400 uppercase">New Document Title</label>
+                  <input 
+                    type="text" 
+                    value={batchEditTitle}
+                    onChange={(e) => setBatchEditTitle(e.target.value)}
+                    placeholder="Keep current title"
+                    className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-mono text-slate-400 uppercase">New Citation</label>
+                  <input 
+                    type="text" 
+                    value={batchEditCitation}
+                    onChange={(e) => setBatchEditCitation(e.target.value)}
+                    placeholder="Keep current citation"
+                    className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-mono text-slate-400 uppercase">New Tags (comma-separated)</label>
+                  <input 
+                    type="text" 
+                    value={batchEditTags}
+                    onChange={(e) => setBatchEditTags(e.target.value)}
+                    placeholder="Keep current tags"
+                    className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900"
+                  />
+                </div>
+                
+                <div className="pt-4 flex justify-end gap-3">
+                  <button 
+                    type="button"
+                    onClick={() => setIsBatchEditing(false)}
+                    className="px-4 py-2 text-slate-500 font-bold hover:text-slate-700"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit"
+                    disabled={isBatchUpdating}
+                    className="px-6 py-2 bg-slate-900 text-white rounded-xl font-bold shadow-lg hover:bg-slate-800 transition-all disabled:opacity-50"
+                  >
+                    {isBatchUpdating ? 'Updating...' : 'Apply to Selected'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isSavingSearch && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                <h3 className="text-xl font-serif font-bold text-slate-900 flex items-center gap-2">
+                  <Bookmark size={20} className="text-indigo-600" /> Save Current Search
+                </h3>
+                <button onClick={() => setIsSavingSearch(false)} className="text-slate-400 hover:text-slate-600">
+                  <X size={20} />
+                </button>
+              </div>
+              
+              <div className="p-6 space-y-4">
+                <div className="p-3 bg-indigo-50 border border-indigo-100 rounded-lg">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 mb-1">Current Filters</p>
+                  <div className="flex flex-wrap gap-1">
+                    {searchQuery && <span className="px-2 py-0.5 bg-white border border-indigo-100 rounded text-[10px] text-indigo-600">Query: {searchQuery}</span>}
+                    {filter !== 'all' && <span className="px-2 py-0.5 bg-white border border-indigo-100 rounded text-[10px] text-indigo-600">Type: {filter}</span>}
+                    {tagFilter !== 'all' && <span className="px-2 py-0.5 bg-white border border-indigo-100 rounded text-[10px] text-indigo-600">Tag: {tagFilter}</span>}
+                    {citationFilter !== 'all' && <span className="px-2 py-0.5 bg-white border border-indigo-100 rounded text-[10px] text-indigo-600">Citation: {citationFilter}</span>}
+                  </div>
+                </div>
+                
+                <div>
+                  <label className="text-xs font-mono text-slate-400 uppercase">Search Name</label>
+                  <input 
+                    type="text" 
+                    value={newSearchName}
+                    onChange={(e) => setNewSearchName(e.target.value)}
+                    placeholder="e.g., Recent Criminal Cases"
+                    className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900"
+                    autoFocus
+                  />
+                </div>
+                
+                <div className="pt-4 flex justify-end gap-3">
+                  <button 
+                    onClick={() => setIsSavingSearch(false)}
+                    className="px-4 py-2 text-slate-500 font-bold hover:text-slate-700"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={handleSaveSearch}
+                    disabled={!newSearchName.trim()}
+                    className="px-6 py-2 bg-slate-900 text-white rounded-xl font-bold shadow-lg hover:bg-slate-800 transition-all disabled:opacity-50"
+                  >
+                    Save Search
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
@@ -1293,7 +1861,7 @@ const ResearchAssistant = () => {
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
   const [sources, setSources] = useState<{title: string, uri: string}[]>([]);
   const [copiedIndex, setCopiedIndex] = useState<string | null>(null);
-  const [researchMode, setResearchMode] = useState<'memo' | 'statute' | 'case' | 'article' | 'summarizer'>('memo');
+  const [researchMode, setResearchMode] = useState<'memo' | 'statute' | 'case' | 'article' | 'summarizer' | 'autonomous'>('memo');
   const [history, setHistory] = useState<{query: string, timestamp: string}[]>([]);
   const [isSaving, setIsSaving] = useState<string | null>(null);
   const [savedIds, setSavedIds] = useState<string[]>([]);
@@ -1323,6 +1891,11 @@ const ResearchAssistant = () => {
       "Summarize Estrada vs. Desierto (G.R. No. 146710)",
       "Provide a case brief for People vs. Genosa",
       "Analyze the ruling in Falcis vs. Civil Registrar General"
+    ],
+    autonomous: [
+      "Conduct a full research on the liability of online platforms for user-generated content in the PH",
+      "Analyze the evolution of the 'Doctrine of Command Responsibility' in PH Jurisprudence",
+      "Perform a comprehensive legal audit of a standard PH employment contract for BPO employees"
     ]
   };
 
@@ -1353,7 +1926,8 @@ const ResearchAssistant = () => {
       statute: ["Searching Statutes...", "Identifying Relevant Articles...", "Checking Amendments...", "Cross-referencing Laws...", "Finalizing Citations..."],
       case: ["Searching Jurisprudence...", "Identifying Key Rulings...", "Analyzing Precedents...", "Checking Case Status...", "Finalizing Citations..."],
       article: ["Searching Legal Journals...", "Retrieving Scholarly Articles...", "Analyzing Legal Commentary...", "Synthesizing Perspectives...", "Finalizing References..."],
-      summarizer: ["Reading Case Text...", "Identifying Facts...", "Extracting Issues...", "Analyzing Ruling...", "Synthesizing Legal Analysis..."]
+      summarizer: ["Reading Case Text...", "Identifying Facts...", "Extracting Issues...", "Analyzing Ruling...", "Synthesizing Legal Analysis..."],
+      autonomous: ["Initializing Autonomous Agent...", "Decomposing Research Goal...", "Searching Jurisprudence...", "Analyzing Statutes...", "Cross-referencing Precedents...", "Synthesizing Multi-step Analysis...", "Finalizing Comprehensive Report..."]
     };
 
     const activeStatuses = statuses[researchMode];
@@ -1391,6 +1965,8 @@ const ResearchAssistant = () => {
         systemPrompt += " Focus on retrieving and analyzing legal articles, scholarly journals, and expert commentaries. Provide a synthesis of different legal perspectives on the topic.";
       } else if (researchMode === 'summarizer') {
         systemPrompt += " You are a Case Summarizer for Philippine Law. Your task is to provide a highly structured and precise summary of the provided case text or citation. You MUST include the following sections: 1. Case Title & Citation (G.R. Number), 2. Facts (concise narrative), 3. Issues (legal questions addressed), 4. Ruling (the court's decision and ratio decidendi), and 5. Legal Analysis (the specific doctrine established and its implications for Philippine jurisprudence). Use professional legal terminology.";
+      } else if (researchMode === 'autonomous') {
+        systemPrompt += " You are an Autonomous Legal Research Agent. Your goal is to perform complex, multi-step research tasks with minimal supervision. You should decompose the user's request into logical steps, search for relevant jurisprudence and statutes, analyze the findings, and provide a comprehensive, data-driven report. Focus on enhancing operational efficiency and providing actionable legal intelligence.";
       }
 
       const response = await ai.models.generateContent({
@@ -1478,7 +2054,7 @@ const ResearchAssistant = () => {
       <header className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-serif font-bold text-slate-900">Legal Research Assistant</h1>
-          <p className="text-slate-500">Autonomous research, statutory analysis, and memorandum synthesis.</p>
+          <p className="text-slate-500">Autonomous agents, statutory analysis, and memorandum synthesis.</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
@@ -1511,6 +2087,12 @@ const ResearchAssistant = () => {
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${researchMode === 'summarizer' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
               Summarizer
+            </button>
+            <button 
+              onClick={() => setResearchMode('autonomous')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${researchMode === 'autonomous' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              Autonomous Agent
             </button>
           </div>
           <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-bold border border-emerald-100">
