@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Fuse from 'fuse.js';
 import { 
   LayoutDashboard, 
@@ -220,7 +220,15 @@ const Dashboard = ({
   );
 };
 
-const DocumentLibrary = ({ onSummarize }: { onSummarize?: (text: string, citation?: string) => void }) => {
+const DocumentLibrary = ({ 
+  onSummarize,
+  setSummarizerInitialData,
+  setActiveView
+}: { 
+  onSummarize?: (text: string, citation?: string) => void,
+  setSummarizerInitialData: (data: {text: string, citation?: string} | null) => void,
+  setActiveView: (view: ViewType) => void
+}) => {
   const {
     documents, setDocuments,
     loading, setLoading,
@@ -251,6 +259,7 @@ const DocumentLibrary = ({ onSummarize }: { onSummarize?: (text: string, citatio
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
   const [isBatchDownloading, setIsBatchDownloading] = useState(false);
   const [isBatchCheckingCitations, setIsBatchCheckingCitations] = useState(false);
+  const [isBatchSummarizing, setIsBatchSummarizing] = useState(false);
   const [isBatchEditing, setIsBatchEditing] = useState(false);
   const [batchEditTitle, setBatchEditTitle] = useState('');
   const [batchEditCitation, setBatchEditCitation] = useState('');
@@ -585,6 +594,83 @@ const DocumentLibrary = ({ onSummarize }: { onSummarize?: (text: string, citatio
       console.error('Batch citation check error:', err);
     } finally {
       setIsBatchCheckingCitations(false);
+    }
+  };
+
+  const handleBatchSummarize = async () => {
+    if (selectedIds.length === 0) return;
+    if (!process.env.GEMINI_API_KEY) {
+      alert("API Key not found. Please add your GEMINI_API_KEY in the Settings > Secrets menu.");
+      return;
+    }
+
+    setIsBatchSummarizing(true);
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+    try {
+      for (const id of selectedIds) {
+        const doc = documents.find(d => d.id === id);
+        if (!doc) continue;
+
+        try {
+          // 1. Fetch content
+          const res = await fetch(`/api/documents/preview/${doc.filename}`);
+          const data = await res.json();
+          if (!data.content) continue;
+
+          // 2. Generate Summary with Gemini
+          const summaryResponse = await ai.models.generateContent({
+            model: "gemini-3.1-pro-preview",
+            contents: [
+              {
+                parts: [
+                  {
+                    text: `Please provide a detailed legal summary of the following document. 
+                    Extract the Case Title, Case Citation (G.R. Number), Facts, Issues, Ruling, and a brief Legal Analysis highlighting the specific doctrine or legal principle established by the Court and its implications for Philippine jurisprudence.
+                    Return a JSON object with 'title', 'citation', 'facts', 'issues', 'ruling', and 'analysis'.
+                    
+                    Document Content: ${data.content.substring(0, 30000)}`,
+                  },
+                ],
+              },
+            ],
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING },
+                  citation: { type: Type.STRING },
+                  facts: { type: Type.STRING },
+                  issues: { type: Type.STRING },
+                  ruling: { type: Type.STRING },
+                  analysis: { type: Type.STRING },
+                },
+                required: ['title', 'citation', 'facts', 'issues', 'ruling', 'analysis']
+              }
+            }
+          });
+
+          if (summaryResponse.text) {
+            const summaryData = JSON.parse(summaryResponse.text);
+            
+            // 3. Update metadata
+            await fetch(`/api/documents/${id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ legal_summary: summaryData }),
+            });
+          }
+        } catch (err) {
+          console.error(`Summarization failed for document ${id}:`, err);
+        }
+      }
+      fetchDocuments();
+      setSelectedIds([]);
+    } catch (err) {
+      console.error('Batch summarization error:', err);
+    } finally {
+      setIsBatchSummarizing(false);
     }
   };
 
@@ -1193,6 +1279,20 @@ const DocumentLibrary = ({ onSummarize }: { onSummarize?: (text: string, citatio
                         )}
                       </button>
                       <button 
+                        onClick={handleBatchSummarize}
+                        disabled={isBatchSummarizing}
+                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                      >
+                        {isBatchSummarizing ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                            Summarizing...
+                          </>
+                        ) : (
+                          <><Zap size={16} /> Batch Summarize</>
+                        )}
+                      </button>
+                      <button 
                         onClick={() => setIsBatchEditing(true)}
                         className="flex items-center gap-2 px-4 py-2 bg-white text-slate-900 border border-slate-200 rounded-lg text-sm font-bold hover:bg-slate-50 transition-colors"
                       >
@@ -1294,6 +1394,39 @@ const DocumentLibrary = ({ onSummarize }: { onSummarize?: (text: string, citatio
                             <div>
                               <span className="font-bold uppercase text-[8px] block mb-0.5">Citation Analysis:</span>
                               <p className="italic leading-tight">{doc.citation_check.analysis}</p>
+                            </div>
+                          </div>
+                        )}
+                        {doc.legal_summary && (
+                          <div className="mt-3 p-3 bg-slate-50 border border-slate-100 rounded-lg max-w-2xl">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Zap size={14} className="text-indigo-600" />
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">AI Legal Summary</span>
+                            </div>
+                            <div className="space-y-2">
+                              <div>
+                                <span className="text-[9px] font-bold text-slate-400 uppercase">Facts:</span>
+                                <p className="text-xs text-slate-600 line-clamp-2 italic">{doc.legal_summary.facts}</p>
+                              </div>
+                              <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                  <span className="text-[9px] font-bold text-slate-400 uppercase">Issues:</span>
+                                  <p className="text-xs text-slate-600 line-clamp-1 italic">{doc.legal_summary.issues}</p>
+                                </div>
+                                <div>
+                                  <span className="text-[9px] font-bold text-slate-400 uppercase">Ruling:</span>
+                                  <p className="text-xs text-slate-600 line-clamp-1 italic">{doc.legal_summary.ruling}</p>
+                                </div>
+                              </div>
+                              <button 
+                                onClick={() => {
+                                  setSummarizerInitialData({ text: doc.legal_summary.facts + "\n\n" + doc.legal_summary.issues + "\n\n" + doc.legal_summary.ruling + "\n\n" + doc.legal_summary.analysis, citation: doc.citation });
+                                  setActiveView('summarizer');
+                                }}
+                                className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-1 mt-1"
+                              >
+                                View Full Summary <ChevronRight size={10} />
+                              </button>
                             </div>
                           </div>
                         )}
@@ -2735,11 +2868,6 @@ const CaseSummarizer = ({
   const [loading, setLoading] = useState(false);
   const [searchMode, setSearchMode] = useState(false);
 
-  useEffect(() => {
-    if (initialText) setCaseText(initialText);
-    if (initialCitation) setCitationInput(initialCitation);
-  }, [initialText, initialCitation]);
-
   const sampleCase = `G.R. No. 135981. January 15, 2004.
 PEOPLE OF THE PHILIPPINES, appellee, vs. MARIVIC GENOSA, appellant.
 
@@ -2752,7 +2880,7 @@ In the present case, the appellant, Marivic Genosa, was charged with parricide f
 
 The trial court convicted her of parricide and sentenced her to death. On appeal, the Supreme Court recognized the existence of battered woman syndrome in the Philippines but ruled that the appellant failed to prove all the elements of self-defense. However, the Court appreciated the syndrome as a mitigating circumstance, analogous to passion or obfuscation, and reduced her sentence.`;
 
-  const handleSummarize = async (useSearch = false) => {
+  const handleSummarize = useCallback(async (useSearch = false) => {
     if (!caseText.trim() && !citationInput.trim()) return;
     setLoading(true);
     setSearchMode(useSearch);
@@ -2818,7 +2946,18 @@ The trial court convicted her of parricide and sentenced her to death. On appeal
       setLoading(false);
       setSearchMode(false);
     }
-  };
+  }, [caseText, citationInput]);
+
+  useEffect(() => {
+    if (initialText) {
+      setCaseText(initialText);
+      // Auto-summarize if text is provided from library
+      if (!summary && !loading) {
+        handleSummarize();
+      }
+    }
+    if (initialCitation) setCitationInput(initialCitation);
+  }, [initialText, initialCitation, handleSummarize]);
 
   const saveToLibrary = async () => {
     if (!summary) return;
@@ -3697,7 +3836,13 @@ export default function App() {
             {activeView === 'statutes' && <StatuteSearch />}
             {activeView === 'analytics' && <PredictiveAnalytics />}
             {activeView === 'knowledge' && <KnowledgeBase />}
-            {activeView === 'library' && <DocumentLibrary onSummarize={handleSummarizeFromLibrary} />}
+            {activeView === 'library' && (
+              <DocumentLibrary 
+                onSummarize={handleSummarizeFromLibrary} 
+                setSummarizerInitialData={setSummarizerInitialData}
+                setActiveView={setActiveView}
+              />
+            )}
             {activeView === 'workflows' && <WorkflowCenter />}
             {activeView === 'settings' && (
               <div className="max-w-2xl">

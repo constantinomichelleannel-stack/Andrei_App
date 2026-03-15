@@ -31,6 +31,7 @@ export interface LegalDocument {
     status: 'valid' | 'caution' | 'invalid' | 'unchecked';
     analysis: string;
   };
+  legal_summary?: CaseSummary;
   version?: number;
   versions?: DocumentVersion[];
 }
