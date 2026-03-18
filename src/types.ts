@@ -3,6 +3,8 @@ export interface Note {
   title: string;
   content: string;
   category: string;
+  tags?: string;
+  source_doc_id?: number;
   created_at: string;
 }
 

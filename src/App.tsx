@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Fuse from 'fuse.js';
 import { 
   LayoutDashboard, 
@@ -50,6 +50,8 @@ import { ViewType, Note, LegalDocument, CaseSummary, LegalPrediction } from './t
 import { useDocumentStore } from './store';
 import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import Markdown from 'react-markdown';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 
 // Components
 const SidebarItem = ({ 
@@ -2439,6 +2441,36 @@ const PredictiveAnalytics = () => {
   const [prediction, setPrediction] = useState<LegalPrediction | null>(null);
   const [previousProbability, setPreviousProbability] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const reportRef = useRef<HTMLDivElement>(null);
+
+  const handleExportPDF = async () => {
+    if (!reportRef.current || !prediction) return;
+    
+    setIsExporting(true);
+    try {
+      const canvas = await html2canvas(reportRef.current, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff'
+      });
+      
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'px',
+        format: [canvas.width, canvas.height]
+      });
+      
+      pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+      pdf.save(`LexPH_Legal_Prediction_${new Date().getTime()}.pdf`);
+    } catch (err) {
+      console.error('PDF Export failed:', err);
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   const handlePredict = async () => {
     if (!facts.trim()) return;
@@ -2492,9 +2524,21 @@ const PredictiveAnalytics = () => {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-3xl font-serif font-bold text-slate-900">Predictive Analytics</h1>
-        <p className="text-slate-500">Data-driven decision making for private legal practice.</p>
+      <header className="flex justify-between items-center">
+        <div>
+          <h1 className="text-3xl font-serif font-bold text-slate-900">Predictive Analytics</h1>
+          <p className="text-slate-500">Data-driven decision making for private legal practice.</p>
+        </div>
+        {prediction && (
+          <button
+            onClick={handleExportPDF}
+            disabled={isExporting}
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 transition-all shadow-sm font-medium disabled:opacity-50"
+          >
+            {isExporting ? <RotateCcw className="animate-spin" size={18} /> : <Download size={18} />}
+            {isExporting ? 'Generating PDF...' : 'Export Report'}
+          </button>
+        )}
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -2530,7 +2574,7 @@ const PredictiveAnalytics = () => {
         </div>
 
         <div className="lg:col-span-2">
-          <div className="legal-card p-8 min-h-[600px] bg-white relative overflow-hidden">
+          <div ref={reportRef} className="legal-card p-8 min-h-[600px] bg-white relative overflow-hidden">
             {!prediction && !loading && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-300 p-12 text-center">
                 <BarChart3 size={80} strokeWidth={1} className="mb-4 opacity-20" />
@@ -3621,10 +3665,27 @@ const JurisprudenceBrowser = () => {
 const KnowledgeBase = () => {
   const [notes, setNotes] = useState<Note[]>([]);
   const [isAdding, setIsAdding] = useState(false);
-  const [newNote, setNewNote] = useState({ title: '', content: '', category: 'General' });
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('All');
+  const [newNote, setNewNote] = useState({ 
+    title: '', 
+    content: '', 
+    category: 'General',
+    tags: '',
+    source_doc_id: undefined as number | undefined
+  });
+  
+  const { documents } = useDocumentStore();
+
+  const fetchNotes = async () => {
+    const res = await fetch('/api/notes');
+    const data = await res.json();
+    setNotes(data);
+  };
 
   useEffect(() => {
-    fetch('/api/notes').then(res => res.json()).then(setNotes);
+    fetchNotes();
   }, []);
 
   const handleAddNote = async () => {
@@ -3635,85 +3696,295 @@ const KnowledgeBase = () => {
       body: JSON.stringify(newNote)
     });
     if (res.ok) {
-      const { id } = await res.json();
-      setNotes([{ ...newNote, id, created_at: new Date().toISOString() }, ...notes]);
-      setNewNote({ title: '', content: '', category: 'General' });
+      fetchNotes();
+      setNewNote({ title: '', content: '', category: 'General', tags: '', source_doc_id: undefined });
       setIsAdding(false);
     }
   };
 
+  const handleDeleteNote = async (id: number) => {
+    if (!confirm("Are you sure you want to delete this insight?")) return;
+    const res = await fetch(`/api/notes/${id}`, { method: 'DELETE' });
+    if (res.ok) {
+      setNotes(notes.filter(n => n.id !== id));
+    }
+  };
+
+  const handleGenerateInsight = async (docId: number) => {
+    const doc = documents.find(d => d.id === docId);
+    if (!doc) return;
+
+    setIsGenerating(true);
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      
+      // Fetch doc content
+      const contentRes = await fetch(`/api/documents/preview/${doc.filename}`);
+      const contentData = await contentRes.json();
+      
+      const response = await ai.models.generateContent({
+        model: "gemini-3.1-pro-preview",
+        contents: `Based on the following legal document, generate a strategic "Legal Insight" or "Practice Note". 
+        Focus on how this case/statute impacts private legal practice, potential risks for clients, and strategic opportunities.
+        The insight should be concise, professional, and actionable.
+        
+        Document: ${doc.title}
+        Content: ${contentData.content?.substring(0, 20000)}
+        
+        Return a JSON object with 'title', 'content', and 'suggested_tags' (comma separated).`,
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              content: { type: Type.STRING },
+              suggested_tags: { type: Type.STRING }
+            },
+            required: ['title', 'content', 'suggested_tags']
+          }
+        }
+      });
+
+      if (response.text) {
+        const data = JSON.parse(response.text);
+        setNewNote({
+          title: data.title,
+          content: data.content,
+          category: 'AI Generated',
+          tags: data.suggested_tags,
+          source_doc_id: docId
+        });
+        setIsAdding(true);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to generate insight.");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const filteredNotes = notes.filter(note => {
+    const matchesSearch = note.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                         note.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         (note.tags && note.tags.toLowerCase().includes(searchQuery.toLowerCase()));
+    const matchesCategory = selectedCategory === 'All' || note.category === selectedCategory;
+    return matchesSearch && matchesCategory;
+  });
+
+  const categories = ['All', 'General', 'Civil Law', 'Criminal Law', 'Labor Law', 'Taxation', 'Practice Note', 'AI Generated', 'Strategy'];
+
   return (
     <div className="space-y-6">
-      <header className="flex justify-between items-center">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-3xl font-serif font-bold text-slate-900">Knowledge Portal</h1>
-          <p className="text-slate-500">Centralized repository for internal knowledge diffusion.</p>
+          <p className="text-slate-500">Centralized repository for internal knowledge diffusion and strategic insights.</p>
         </div>
-        <button 
-          onClick={() => setIsAdding(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors"
-        >
-          <Plus size={20} /> New Insight
-        </button>
+        <div className="flex gap-2">
+          <button 
+            onClick={() => setIsAdding(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors shadow-sm"
+          >
+            <Plus size={18} /> New Insight
+          </button>
+        </div>
       </header>
 
-      {isAdding && (
-        <motion.div 
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="legal-card p-6 space-y-4"
-        >
-          <input 
-            type="text" 
-            placeholder="Insight Title"
-            value={newNote.title}
-            onChange={e => setNewNote({...newNote, title: e.target.value})}
-            className="w-full text-xl font-serif font-bold focus:outline-none"
-          />
-          <select 
-            value={newNote.category}
-            onChange={e => setNewNote({...newNote, category: e.target.value})}
-            className="bg-slate-50 text-xs font-mono px-2 py-1 rounded border border-slate-200"
-          >
-            <option>General</option>
-            <option>Civil Law</option>
-            <option>Criminal Law</option>
-            <option>Labor Law</option>
-            <option>Taxation</option>
-          </select>
-          <textarea 
-            placeholder="Start writing..."
-            value={newNote.content}
-            onChange={e => setNewNote({...newNote, content: e.target.value})}
-            className="w-full h-32 focus:outline-none resize-none"
-          />
-          <div className="flex justify-end gap-3">
-            <button onClick={() => setIsAdding(false)} className="px-4 py-2 text-slate-500 hover:text-slate-900">Cancel</button>
-            <button onClick={handleAddNote} className="px-4 py-2 bg-slate-900 text-white rounded-lg">Save Insight</button>
-          </div>
-        </motion.div>
-      )}
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {notes.map(note => (
-          <div key={note.id} className="legal-card p-6 flex flex-col h-56 group">
-            <div className="flex justify-between items-start mb-2">
-              <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">{note.category}</span>
-              <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-900"><Share2 size={14} /></button>
-                <button className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-900"><Database size={14} /></button>
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        {/* Sidebar / Filters */}
+        <div className="lg:col-span-1 space-y-6">
+          <div className="legal-card p-4 space-y-4">
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Search Insights</label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                <input 
+                  type="text"
+                  placeholder="Keywords, tags..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
               </div>
             </div>
-            <h3 className="text-lg font-serif font-bold text-slate-900 mb-2 line-clamp-1">{note.title}</h3>
-            <p className="text-sm text-slate-500 line-clamp-3 flex-1">{note.content}</p>
-            <div className="mt-4 pt-4 border-t border-slate-50 flex justify-between items-center">
-              <span className="text-[10px] text-slate-400">{new Date(note.created_at).toLocaleDateString()}</span>
-              <button className="text-xs font-medium text-slate-900 flex items-center gap-1 hover:underline">
-                Read more <ChevronRight size={12} />
-              </button>
+
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">Categories</label>
+              <div className="space-y-1">
+                {categories.map(cat => (
+                  <button
+                    key={cat}
+                    onClick={() => setSelectedCategory(cat)}
+                    className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
+                      selectedCategory === cat 
+                        ? 'bg-indigo-600 text-white font-medium' 
+                        : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-        ))}
+
+          <div className="legal-card p-4">
+            <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center gap-2">
+              <BrainCircuit size={16} className="text-indigo-600" /> AI Synthesis
+            </h3>
+            <p className="text-xs text-slate-500 mb-4">Generate strategic practice notes from your document library.</p>
+            <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
+              {documents.slice(0, 5).map(doc => (
+                <button
+                  key={doc.id}
+                  onClick={() => handleGenerateInsight(doc.id)}
+                  disabled={isGenerating}
+                  className="w-full text-left p-2 rounded border border-slate-100 hover:border-indigo-200 hover:bg-indigo-50 transition-all group disabled:opacity-50"
+                >
+                  <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">Source Case</div>
+                  <div className="text-xs font-medium text-slate-700 line-clamp-1 group-hover:text-indigo-700">{doc.title}</div>
+                </button>
+              ))}
+              {documents.length === 0 && (
+                <div className="text-xs text-slate-400 italic text-center py-4">No documents in library</div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Main Content */}
+        <div className="lg:col-span-3 space-y-6">
+          {isAdding && (
+            <motion.div 
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="legal-card p-6 border-2 border-indigo-100 shadow-lg relative"
+            >
+              <button 
+                onClick={() => setIsAdding(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
+              >
+                <X size={20} />
+              </button>
+              
+              <div className="space-y-4">
+                <input 
+                  type="text" 
+                  placeholder="Insight Title"
+                  value={newNote.title}
+                  onChange={e => setNewNote({...newNote, title: e.target.value})}
+                  className="w-full text-2xl font-serif font-bold focus:outline-none border-b border-slate-100 pb-2"
+                />
+                
+                <div className="flex flex-wrap gap-4">
+                  <div className="flex-1 min-w-[200px]">
+                    <label className="text-[10px] font-bold uppercase text-slate-400 mb-1 block">Category</label>
+                    <select 
+                      value={newNote.category}
+                      onChange={e => setNewNote({...newNote, category: e.target.value})}
+                      className="w-full bg-slate-50 text-sm px-3 py-2 rounded border border-slate-200"
+                    >
+                      {categories.filter(c => c !== 'All').map(c => <option key={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex-1 min-w-[200px]">
+                    <label className="text-[10px] font-bold uppercase text-slate-400 mb-1 block">Tags (comma separated)</label>
+                    <input 
+                      type="text"
+                      placeholder="e.g. strategy, risk, civil-law"
+                      value={newNote.tags}
+                      onChange={e => setNewNote({...newNote, tags: e.target.value})}
+                      className="w-full bg-slate-50 text-sm px-3 py-2 rounded border border-slate-200"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-400 mb-1 block">Insight Content</label>
+                  <textarea 
+                    placeholder="Describe the legal insight, strategic implication, or practice note..."
+                    value={newNote.content}
+                    onChange={e => setNewNote({...newNote, content: e.target.value})}
+                    className="w-full h-48 bg-slate-50 p-4 rounded border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-3">
+                  <button 
+                    onClick={() => setIsAdding(false)}
+                    className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={handleAddNote}
+                    className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700 transition-all shadow-md"
+                  >
+                    Save Insight
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {filteredNotes.map(note => (
+              <motion.div 
+                layout
+                key={note.id}
+                className="legal-card p-5 hover:border-indigo-200 transition-all group relative"
+              >
+                <div className="flex justify-between items-start mb-3">
+                  <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded ${
+                    note.category === 'AI Generated' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-600'
+                  }`}>
+                    {note.category}
+                  </span>
+                  <button 
+                    onClick={() => handleDeleteNote(note.id)}
+                    className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+                
+                <h3 className="text-lg font-serif font-bold text-slate-900 mb-2">{note.title}</h3>
+                <p className="text-sm text-slate-600 line-clamp-4 mb-4 leading-relaxed">{note.content}</p>
+                
+                <div className="flex flex-wrap gap-1 mb-4">
+                  {note.tags?.split(',').map((tag, i) => (
+                    <span key={i} className="text-[9px] bg-slate-50 text-slate-500 px-1.5 py-0.5 rounded border border-slate-100">
+                      #{tag.trim()}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="flex justify-between items-center pt-3 border-t border-slate-50">
+                  <span className="text-[10px] font-mono text-slate-400">
+                    {new Date(note.created_at).toLocaleDateString()}
+                  </span>
+                  {note.source_doc_id && (
+                    <div className="flex items-center gap-1 text-[10px] font-bold text-indigo-600">
+                      <BookOpen size={10} /> LINKED TO SOURCE
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            ))}
+            {filteredNotes.length === 0 && (
+              <div className="col-span-full py-20 text-center">
+                <div className="inline-flex p-4 bg-slate-50 rounded-full mb-4">
+                  <Search size={32} className="text-slate-300" />
+                </div>
+                <h3 className="text-lg font-medium text-slate-900">No insights found</h3>
+                <p className="text-slate-500">Try adjusting your search or category filters.</p>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

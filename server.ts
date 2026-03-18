@@ -43,6 +43,8 @@ db.exec(`
     title TEXT NOT NULL,
     content TEXT,
     category TEXT,
+    tags TEXT,
+    source_doc_id INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -100,6 +102,16 @@ if (!columns.includes('version')) {
   db.exec("ALTER TABLE documents ADD COLUMN version INTEGER DEFAULT 1;");
 }
 
+// Check notes table columns
+const noteTableInfo = db.prepare("PRAGMA table_info(notes)").all() as any[];
+const noteColumns = noteTableInfo.map(col => col.name);
+if (!noteColumns.includes('tags')) {
+  db.exec("ALTER TABLE notes ADD COLUMN tags TEXT;");
+}
+if (!noteColumns.includes('source_doc_id')) {
+  db.exec("ALTER TABLE notes ADD COLUMN source_doc_id INTEGER;");
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -113,9 +125,28 @@ async function startServer() {
   });
 
   app.post("/api/notes", (req, res) => {
-    const { title, content, category } = req.body;
-    const info = db.prepare("INSERT INTO notes (title, content, category) VALUES (?, ?, ?)").run(title, content, category);
+    const { title, content, category, tags, source_doc_id } = req.body;
+    const info = db.prepare("INSERT INTO notes (title, content, category, tags, source_doc_id) VALUES (?, ?, ?, ?, ?)").run(
+      title, 
+      content, 
+      category, 
+      tags || null, 
+      source_doc_id || null
+    );
     res.json({ id: info.lastInsertRowid });
+  });
+
+  app.patch("/api/notes/:id", (req, res) => {
+    const { id } = req.params;
+    const { title, content, category, tags, source_doc_id } = req.body;
+    
+    if (title !== undefined) db.prepare("UPDATE notes SET title = ? WHERE id = ?").run(title, id);
+    if (content !== undefined) db.prepare("UPDATE notes SET content = ? WHERE id = ?").run(content, id);
+    if (category !== undefined) db.prepare("UPDATE notes SET category = ? WHERE id = ?").run(category, id);
+    if (tags !== undefined) db.prepare("UPDATE notes SET tags = ? WHERE id = ?").run(tags, id);
+    if (source_doc_id !== undefined) db.prepare("UPDATE notes SET source_doc_id = ? WHERE id = ?").run(source_doc_id, id);
+    
+    res.json({ success: true });
   });
 
   app.delete("/api/notes/:id", (req, res) => {
