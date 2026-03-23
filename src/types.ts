@@ -34,8 +34,20 @@ export interface LegalDocument {
     analysis: string;
   };
   legal_summary?: CaseSummary;
+  citation_analysis?: string;
   version?: number;
   versions?: DocumentVersion[];
+}
+
+export interface JurisprudenceResult {
+  overview: string;
+  cases: {
+    title: string;
+    citation: string;
+    date: string;
+    summary: string;
+    ruling: string;
+  }[];
 }
 
 export type ViewType = 'dashboard' | 'research' | 'knowledge' | 'library' | 'analytics' | 'summarizer' | 'settings' | 'jurisprudence' | 'workflows' | 'statutes';
@@ -70,5 +82,7 @@ export interface SavedSearch {
   statusFilter: 'all' | 'completed' | 'processing' | 'failed';
   tagFilter: string;
   citationFilter: 'all' | 'valid' | 'caution' | 'invalid' | 'unchecked';
+  summaryFilter: 'all' | 'has-summary' | 'no-summary';
+  analysisFilter: 'all' | 'has-analysis' | 'no-analysis';
   sortBy: 'newest' | 'oldest' | 'size-desc' | 'size-asc' | 'title';
 }

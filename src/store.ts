@@ -13,6 +13,8 @@ interface DocumentLibraryState {
   statusFilter: 'all' | 'completed' | 'processing' | 'failed';
   tagFilter: string;
   citationFilter: 'all' | 'valid' | 'caution' | 'invalid' | 'unchecked';
+  summaryFilter: 'all' | 'has-summary' | 'no-summary';
+  analysisFilter: 'all' | 'has-analysis' | 'no-analysis';
   sortBy: 'newest' | 'oldest' | 'size-desc' | 'size-asc' | 'title';
   selectedIds: number[];
   savedSearches: SavedSearch[];
@@ -28,6 +30,8 @@ interface DocumentLibraryState {
   setStatusFilter: (status: 'all' | 'completed' | 'processing' | 'failed') => void;
   setTagFilter: (tag: string) => void;
   setCitationFilter: (citation: 'all' | 'valid' | 'caution' | 'invalid' | 'unchecked') => void;
+  setSummaryFilter: (filter: 'all' | 'has-summary' | 'no-summary') => void;
+  setAnalysisFilter: (filter: 'all' | 'has-analysis' | 'no-analysis') => void;
   setSortBy: (sortBy: 'newest' | 'oldest' | 'size-desc' | 'size-asc' | 'title') => void;
   setSelectedIds: (ids: number[] | ((prev: number[]) => number[])) => void;
   resetFilters: () => void;
@@ -49,6 +53,8 @@ export const useDocumentStore = create<DocumentLibraryState>()(
       statusFilter: 'all',
       tagFilter: 'all',
       citationFilter: 'all',
+      summaryFilter: 'all',
+      analysisFilter: 'all',
       sortBy: 'newest',
       selectedIds: [],
       savedSearches: [],
@@ -63,6 +69,8 @@ export const useDocumentStore = create<DocumentLibraryState>()(
       setStatusFilter: (statusFilter) => set({ statusFilter }),
       setTagFilter: (tagFilter) => set({ tagFilter }),
       setCitationFilter: (citationFilter) => set({ citationFilter }),
+      setSummaryFilter: (summaryFilter) => set({ summaryFilter }),
+      setAnalysisFilter: (analysisFilter) => set({ analysisFilter }),
       setSortBy: (sortBy) => set({ sortBy }),
       setSelectedIds: (ids) => set((state) => ({ 
         selectedIds: typeof ids === 'function' ? ids(state.selectedIds) : ids 
@@ -75,6 +83,8 @@ export const useDocumentStore = create<DocumentLibraryState>()(
         statusFilter: 'all',
         tagFilter: 'all',
         citationFilter: 'all',
+        summaryFilter: 'all',
+        analysisFilter: 'all',
         sortBy: 'newest',
         searchQuery: '',
       }),
@@ -93,6 +103,8 @@ export const useDocumentStore = create<DocumentLibraryState>()(
         statusFilter: search.statusFilter,
         tagFilter: search.tagFilter,
         citationFilter: search.citationFilter,
+        summaryFilter: search.summaryFilter || 'all',
+        analysisFilter: search.analysisFilter || 'all',
         sortBy: search.sortBy,
       }),
     }),
