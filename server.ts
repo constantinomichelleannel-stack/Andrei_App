@@ -71,6 +71,9 @@ db.exec(`
     title TEXT,
     type TEXT, -- 'case', 'statute', 'memo'
     citation TEXT,
+    author TEXT,
+    date_published TEXT,
+    keywords TEXT, -- comma-separated keywords
     summary TEXT,
     tags TEXT, -- comma-separated tags
     size INTEGER,
@@ -92,6 +95,13 @@ db.exec(`
     uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
   );
+
+  CREATE INDEX IF NOT EXISTS idx_document_versions_document_id ON document_versions(document_id);
+  CREATE INDEX IF NOT EXISTS idx_documents_uploaded_at ON documents(uploaded_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_documents_author ON documents(author);
+  CREATE INDEX IF NOT EXISTS idx_documents_date_published ON documents(date_published);
+  CREATE INDEX IF NOT EXISTS idx_notes_source_doc_id ON notes(source_doc_id);
+  CREATE INDEX IF NOT EXISTS idx_notes_created_at ON notes(created_at DESC);
 
   -- Add version column if it doesn't exist (for existing databases)
   PRAGMA table_info(documents);
@@ -178,6 +188,15 @@ if (!columns.includes('citation_analysis')) {
 if (!columns.includes('version')) {
   db.exec("ALTER TABLE documents ADD COLUMN version INTEGER DEFAULT 1;");
 }
+if (!columns.includes('author')) {
+  db.exec("ALTER TABLE documents ADD COLUMN author TEXT;");
+}
+if (!columns.includes('date_published')) {
+  db.exec("ALTER TABLE documents ADD COLUMN date_published TEXT;");
+}
+if (!columns.includes('keywords')) {
+  db.exec("ALTER TABLE documents ADD COLUMN keywords TEXT;");
+}
 
 // Check notes table columns
 const noteTableInfo = db.prepare("PRAGMA table_info(notes)").all() as any[];
@@ -194,6 +213,21 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json());
+
+  // Health check endpoint
+  app.get("/api/health", (req, res) => {
+    try {
+      const result = db.prepare("SELECT 1 as connected").get() as { connected: number };
+      if (result && result.connected === 1) {
+        res.json({ status: "ok", database: "connected" });
+      } else {
+        res.status(500).json({ status: "error", database: "disconnected" });
+      }
+    } catch (err) {
+      console.error("Health check failed:", err);
+      res.status(500).json({ status: "error", database: "error", message: err instanceof Error ? err.message : String(err) });
+    }
+  });
 
   // API Routes
   app.get("/api/notes", (req, res) => {
@@ -232,22 +266,37 @@ async function startServer() {
   });
 
   app.get("/api/documents", (req, res) => {
-    const docs = db.prepare("SELECT * FROM documents ORDER BY uploaded_at DESC").all() as any[];
-    const formattedDocs = docs.map(doc => {
-      const versions = db.prepare("SELECT * FROM document_versions WHERE document_id = ? ORDER BY version DESC").all(doc.id);
-      return {
-        ...doc,
-        tags: doc.tags ? doc.tags.split(',') : [],
-        citation_check: doc.citation_check ? JSON.parse(doc.citation_check) : null,
-        legal_summary: doc.legal_summary ? JSON.parse(doc.legal_summary) : null,
-        versions
-      };
-    });
-    res.json(formattedDocs);
+    try {
+      const docs = db.prepare("SELECT * FROM documents ORDER BY uploaded_at DESC").all() as any[];
+      const allVersions = db.prepare("SELECT * FROM document_versions ORDER BY version DESC").all() as any[];
+      
+      const versionsByDocId: Record<number, any[]> = {};
+      allVersions.forEach(v => {
+        if (!versionsByDocId[v.document_id]) {
+          versionsByDocId[v.document_id] = [];
+        }
+        versionsByDocId[v.document_id].push(v);
+      });
+
+      const formattedDocs = docs.map(doc => {
+        return {
+          ...doc,
+          tags: doc.tags ? doc.tags.split(',').map((t: string) => t.trim()) : [],
+          keywords: doc.keywords ? doc.keywords.split(',').map((k: string) => k.trim()) : [],
+          citation_check: doc.citation_check ? JSON.parse(doc.citation_check) : null,
+          legal_summary: doc.legal_summary ? JSON.parse(doc.legal_summary) : null,
+          versions: versionsByDocId[doc.id] || []
+        };
+      });
+      res.json(formattedDocs);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Failed to fetch documents" });
+    }
   });
 
   app.post("/api/documents", upload.single("file"), async (req, res) => {
-    const { title, type, tags, citation, summary: providedSummary, citation_check } = req.body;
+    const { title, type, tags, citation, summary: providedSummary, citation_check, author, date_published, keywords } = req.body;
     const file = req.file;
 
     if (!file) {
@@ -287,11 +336,14 @@ async function startServer() {
         }
       }
 
-      const info = db.prepare("INSERT INTO documents (filename, title, type, citation, summary, tags, size, status, citation_check) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+      const info = db.prepare("INSERT INTO documents (filename, title, type, citation, author, date_published, keywords, summary, tags, size, status, citation_check) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
         file.filename,
         title || file.originalname,
         type || 'case',
         citation || '',
+        author || '',
+        date_published || '',
+        keywords || '',
         summary,
         tags || '',
         file.size,
@@ -463,7 +515,7 @@ Generated by LexPH AI Case Summarizer
 
   app.patch("/api/documents/:id", (req, res) => {
     const { id } = req.params;
-    const { citation_check, legal_summary, citation_analysis, title, citation, tags } = req.body;
+    const { citation_check, legal_summary, citation_analysis, title, citation, tags, author, date_published, keywords } = req.body;
 
     try {
       if (citation_check !== undefined) {
@@ -494,6 +546,18 @@ Generated by LexPH AI Case Summarizer
       
       if (tags !== undefined) {
         db.prepare("UPDATE documents SET tags = ? WHERE id = ?").run(tags, id);
+      }
+
+      if (author !== undefined) {
+        db.prepare("UPDATE documents SET author = ? WHERE id = ?").run(author, id);
+      }
+
+      if (date_published !== undefined) {
+        db.prepare("UPDATE documents SET date_published = ? WHERE id = ?").run(date_published, id);
+      }
+
+      if (keywords !== undefined) {
+        db.prepare("UPDATE documents SET keywords = ? WHERE id = ?").run(keywords, id);
       }
 
       res.json({ success: true });

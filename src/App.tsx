@@ -45,15 +45,26 @@ import {
   ArrowUpDown,
   Bookmark,
   FileSpreadsheet,
-  Archive
+  AlertTriangle,
+  XCircle,
+  Archive,
+  User,
+  Hash,
+  GitCompare,
+  LogOut,
+  History as HistoryIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ViewType, Note, LegalDocument, CaseSummary, LegalPrediction, JurisprudenceResult } from './types';
+import { ViewType, Note, LegalDocument, CaseSummary, LegalPrediction, JurisprudenceResult, ChatMessage } from './types';
 import { useDocumentStore } from './store';
 import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import Markdown from 'react-markdown';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import { useAuth } from './contexts/AuthContext';
+import { AuthScreen } from './components/Auth';
+import { auth, signOut, db } from './firebase';
+import { getDocFromServer, doc } from 'firebase/firestore';
 
 // Components
 const SidebarItem = ({ 
@@ -87,6 +98,26 @@ const Dashboard = ({
   onViewWorkflows: () => void,
   onViewStatutes: () => void
 }) => {
+  const { documents } = useDocumentStore();
+  
+  const citationStats = useMemo(() => {
+    const stats = {
+      valid: 0,
+      caution: 0,
+      invalid: 0,
+      unchecked: 0
+    };
+    
+    documents.forEach(doc => {
+      const status = doc.citation_check?.status || 'unchecked';
+      if (status in stats) {
+        stats[status as keyof typeof stats]++;
+      }
+    });
+    
+    return stats;
+  }, [documents]);
+
   return (
     <div className="space-y-6">
       <header>
@@ -122,7 +153,7 @@ const Dashboard = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <div className="legal-card p-6 bg-slate-900 text-white">
           <div className="flex justify-between items-start mb-4">
             <div className="p-2 bg-white/10 rounded-lg">
@@ -162,6 +193,64 @@ const Dashboard = ({
           <p className="text-sm text-emerald-600 mt-2 flex items-center gap-1">
             <TrendingUp size={14} /> +3.2% from last week
           </p>
+        </div>
+
+        <div className="legal-card p-6 bg-white border-slate-200">
+          <div className="flex justify-between items-start mb-4">
+            <div className="p-2 bg-slate-100 rounded-lg text-slate-900">
+              <Library size={24} />
+            </div>
+            <span className="text-xs font-mono text-slate-400">TOTAL DOCUMENTS</span>
+          </div>
+          <div className="text-4xl font-serif font-bold text-slate-900">{documents.length}</div>
+          <p className="text-sm text-slate-500 mt-2">In document library</p>
+        </div>
+      </div>
+
+      <div className="legal-card p-6">
+        <h3 className="text-lg font-serif font-bold mb-6 flex items-center gap-2">
+          <ShieldAlert size={20} className="text-indigo-600" /> Citation Validation Summary
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center gap-4">
+            <div className="p-3 bg-emerald-500 rounded-lg text-white">
+              <CheckCircle2 size={24} />
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-emerald-900">{citationStats.valid}</div>
+              <div className="text-xs font-medium text-emerald-700 uppercase tracking-wider">Valid Citations</div>
+            </div>
+          </div>
+          
+          <div className="p-4 rounded-xl bg-amber-50 border border-amber-100 flex items-center gap-4">
+            <div className="p-3 bg-amber-500 rounded-lg text-white">
+              <AlertTriangle size={24} />
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-amber-900">{citationStats.caution}</div>
+              <div className="text-xs font-medium text-amber-700 uppercase tracking-wider">Caution Required</div>
+            </div>
+          </div>
+          
+          <div className="p-4 rounded-xl bg-rose-50 border border-rose-100 flex items-center gap-4">
+            <div className="p-3 bg-rose-500 rounded-lg text-white">
+              <XCircle size={24} />
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-rose-900">{citationStats.invalid}</div>
+              <div className="text-xs font-medium text-rose-700 uppercase tracking-wider">Invalid Citations</div>
+            </div>
+          </div>
+          
+          <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 flex items-center gap-4">
+            <div className="p-3 bg-slate-400 rounded-lg text-white">
+              <Clock size={24} />
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-slate-900">{citationStats.unchecked}</div>
+              <div className="text-xs font-medium text-slate-700 uppercase tracking-wider">Unchecked</div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -228,14 +317,16 @@ const TagManager = ({
   tags, 
   onAdd, 
   onRemove, 
-  allTags,
-  placeholder = "Add tag..."
+  allTags = [], 
+  placeholder = "Add tag...",
+  icon: Icon = Tag
 }: { 
   tags: string[], 
   onAdd: (tag: string) => void, 
   onRemove: (tag: string) => void,
-  allTags: string[],
-  placeholder?: string
+  allTags?: string[],
+  placeholder?: string,
+  icon?: any
 }) => {
   const [input, setInput] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -267,6 +358,7 @@ const TagManager = ({
             key={idx} 
             className="flex items-center gap-1.5 px-2.5 py-1 bg-white text-indigo-600 rounded-full text-[10px] font-bold border border-indigo-100 shadow-sm group"
           >
+            <Icon size={10} className="text-indigo-300" />
             {tag}
             <button 
               type="button"
@@ -281,7 +373,7 @@ const TagManager = ({
       <div className="relative">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
-            <Tag size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Icon size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               value={input}
@@ -341,14 +433,82 @@ const TagManager = ({
   );
 };
 
+const ConfirmModal = ({ 
+  show, 
+  title, 
+  message, 
+  onConfirm, 
+  onCancel, 
+  type = 'warning' 
+}: { 
+  show: boolean; 
+  title: string; 
+  message: string; 
+  onConfirm: () => void; 
+  onCancel: () => void;
+  type?: 'danger' | 'warning' | 'info';
+}) => {
+  if (!show) return null;
+  
+  const colors = {
+    danger: 'bg-red-600 hover:bg-red-700 shadow-red-200',
+    warning: 'bg-amber-600 hover:bg-amber-700 shadow-amber-200',
+    info: 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-200'
+  };
+
+  const icons = {
+    danger: <XCircle className="text-red-600" size={24} />,
+    warning: <AlertTriangle className="text-amber-600" size={24} />,
+    info: <Info className="text-indigo-600" size={24} />
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
+      >
+        <div className="p-6 text-center">
+          <div className="flex justify-center mb-4">
+            {icons[type]}
+          </div>
+          <h3 className="text-xl font-serif font-bold text-slate-900 mb-2">{title}</h3>
+          <p className="text-sm text-slate-500 leading-relaxed">{message}</p>
+        </div>
+        <div className="p-4 bg-slate-50 flex gap-3">
+          <button 
+            onClick={onCancel}
+            className="flex-1 px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-xl transition-all"
+          >
+            Cancel
+          </button>
+          <button 
+            onClick={() => {
+              onConfirm();
+              onCancel();
+            }}
+            className={`flex-1 px-4 py-2 text-white rounded-xl font-bold transition-all shadow-lg ${colors[type]}`}
+          >
+            Confirm
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
 const DocumentLibrary = ({ 
   onSummarize,
   setSummarizerInitialData,
-  setActiveView
+  setActiveView,
+  showConfirm
 }: { 
   onSummarize?: (text: string, citation?: string) => void,
   setSummarizerInitialData: (data: {text: string, citation?: string} | null) => void,
-  setActiveView: (view: ViewType) => void
+  setActiveView: (view: ViewType) => void,
+  showConfirm: (title: string, message: string, onConfirm: () => void, type?: 'danger' | 'warning' | 'info') => void
 }) => {
   const {
     documents, setDocuments,
@@ -360,6 +520,9 @@ const DocumentLibrary = ({
     sizeFilter, setSizeFilter,
     statusFilter, setStatusFilter,
     tagFilter, setTagFilter,
+    authorFilter, setAuthorFilter,
+    datePublishedFilter, setDatePublishedFilter,
+    keywordFilter, setKeywordFilter,
     citationFilter, setCitationFilter,
     summaryFilter, setSummaryFilter,
     analysisFilter, setAnalysisFilter,
@@ -378,6 +541,9 @@ const DocumentLibrary = ({
   const [processingStep, setProcessingStep] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [citation, setCitation] = useState('');
+  const [author, setAuthor] = useState('');
+  const [datePublished, setDatePublished] = useState('');
+  const [keywords, setKeywords] = useState<string[]>([]);
   const [type, setType] = useState<'case' | 'statute' | 'memo'>('case');
   const [tags, setTags] = useState<string[]>([]);
   const [manualSummary, setManualSummary] = useState('');
@@ -392,11 +558,17 @@ const DocumentLibrary = ({
   const [isBatchEditing, setIsBatchEditing] = useState(false);
   const [batchEditTitle, setBatchEditTitle] = useState('');
   const [batchEditCitation, setBatchEditCitation] = useState('');
+  const [batchEditAuthor, setBatchEditAuthor] = useState('');
+  const [batchEditDatePublished, setBatchEditDatePublished] = useState('');
+  const [batchEditKeywords, setBatchEditKeywords] = useState<string[]>([]);
   const [batchEditTags, setBatchEditTags] = useState<string[]>([]);
   const [isBatchUpdating, setIsBatchUpdating] = useState(false);
   const [editingDoc, setEditingDoc] = useState<LegalDocument | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editCitation, setEditCitation] = useState('');
+  const [editAuthor, setEditAuthor] = useState('');
+  const [editDatePublished, setEditDatePublished] = useState('');
+  const [editKeywords, setEditKeywords] = useState<string[]>([]);
   const [editTags, setEditTags] = useState<string[]>([]);
   const [isUpdating, setIsUpdating] = useState(false);
   const [selectedVersionDoc, setSelectedVersionDoc] = useState<LegalDocument | null>(null);
@@ -410,6 +582,10 @@ const DocumentLibrary = ({
   const [expandedDocId, setExpandedDocId] = useState<number | null>(null);
   const [isCopied, setIsCopied] = useState(false);
   const [showStructuredSummaryId, setShowStructuredSummaryId] = useState<number | null>(null);
+  const [comparingVersion, setComparingVersion] = useState<any | null>(null);
+  const [comparisonContent, setComparisonContent] = useState<{ current: string, target: string } | null>(null);
+  const [isComparisonLoading, setIsComparisonLoading] = useState(false);
+  const [viewingVersion, setViewingVersion] = useState<any | null>(null);
 
   const handleCopy = async (text: string) => {
     try {
@@ -442,12 +618,12 @@ const DocumentLibrary = ({
     if (!file) return;
 
     setIsUploading(true);
-    setUploadProgress(5);
+    setUploadProgress(0);
     setAiProgress(0);
     setFileProgress(0);
-    setAiStep('Waiting...');
-    setFileStep('Waiting...');
-    setProcessingStep('Preparing document...');
+    setAiStep('Initializing...');
+    setFileStep('Queued');
+    setProcessingStep('Preparing document for analysis...');
     
     let finalSummary = manualSummary.trim();
     let citationCheck = null;
@@ -457,7 +633,8 @@ const DocumentLibrary = ({
       try {
         setProcessingStep('AI Analysis in progress...');
         setAiStep('Reading file content...');
-        setAiProgress(10);
+        setAiProgress(5);
+        setUploadProgress(5);
         
         const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
         
@@ -471,12 +648,17 @@ const DocumentLibrary = ({
           reader.readAsDataURL(file);
         });
 
-        setAiProgress(20);
+        setAiProgress(15);
+        setUploadProgress(10);
+        setAiStep('Analyzing document structure...');
+        setProcessingStep('Analyzing document structure...');
 
         // 1. Generate Summary if needed
         if (!finalSummary) {
-          setAiStep('Generating Legal Summary...');
-          setAiProgress(30);
+          setAiStep('Generating legal summary...');
+          setProcessingStep('Generating legal summary...');
+          setAiProgress(20);
+          setUploadProgress(15);
           try {
             const summaryResponse = await ai.models.generateContent({
               model: "gemini-3.1-pro-preview",
@@ -490,21 +672,32 @@ const DocumentLibrary = ({
                       },
                     },
                     {
-                      text: "Please provide a concise, one-sentence legal summary of this document. Focus on the main subject matter and legal significance.",
+                      text: `You are an expert Philippine Legal Researcher. Provide a concise, one-sentence legal summary of this document. 
+                      Focus on the main subject matter, the specific legal doctrine or provision involved, and its significance in Philippine law.
+                      If it's a Supreme Court case, mention the core ruling. If it's a statute, mention its primary purpose.`,
                     },
                   ],
                 },
               ],
+              config: {
+                thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
+              },
             });
             finalSummary = summaryResponse.text || "";
+            setAiProgress(60);
+            setUploadProgress(30);
           } catch (err) {
             console.error("AI Summarization failed:", err);
+            setAiStep('Summarization failed');
           }
+        } else {
+          setAiProgress(60);
+          setUploadProgress(30);
         }
-        setAiProgress(60);
 
         // 2. Check Citations
-        setAiStep('Checking Citations...');
+        setAiStep('Checking legal citations...');
+        setProcessingStep('Checking legal citations...');
         try {
           const citationResponse = await ai.models.generateContent({
             model: "gemini-3.1-pro-preview",
@@ -518,12 +711,25 @@ const DocumentLibrary = ({
                     },
                   },
                   {
-                    text: "Analyze the legal citations in this document. Identify the main citations and check if they are still valid and current (e.g., not overturned, repealed, or amended). Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and 'analysis' (a brief explanation of the validity of the citations found).",
+                    text: `You are an expert Philippine Legal Researcher. Analyze the legal citations in the provided document.
+
+1. Identify all primary citations (Supreme Court cases, Republic Acts, Executive Orders, etc.).
+2. For each major citation, evaluate its current validity in Philippine jurisprudence:
+   - Is it still "Good Law"?
+   - Has it been explicitly or impliedly overturned by a more recent Supreme Court decision?
+   - Has the statute been repealed, amended, or declared unconstitutional?
+3. Assign an overall status:
+   - 'valid': All major citations are current and reliable.
+   - 'caution': Some citations are old or have been partially modified/clarified by later jurisprudence, or there are conflicting rulings.
+   - 'invalid': A major citation has been explicitly overturned or the law has been repealed.
+
+Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and 'analysis' (a detailed explanation of your findings, citing specific cases or laws that affect the validity).`,
                   },
                 ],
               },
             ],
             config: {
+              thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
               responseMimeType: "application/json",
               responseSchema: {
                 type: Type.OBJECT,
@@ -545,28 +751,39 @@ const DocumentLibrary = ({
           if (citationResponse.text) {
             citationCheck = JSON.parse(citationResponse.text);
           }
+          setAiProgress(100);
+          setUploadProgress(50);
         } catch (err) {
           console.error("Citation check failed:", err);
+          setAiStep('Citation check failed');
         }
-        setAiProgress(100);
         setAiStep('Analysis Complete');
+        setProcessingStep('AI Analysis complete. Starting upload...');
+        setUploadProgress(50);
 
       } catch (err) {
         console.error("Gemini processing failed:", err);
         setAiStep('Analysis Failed');
+        setProcessingStep('AI Analysis failed, proceeding with upload...');
+        setUploadProgress(50);
       }
     } else {
-      setAiStep('Skipped (No API Key)');
+      setAiStep('Skipped');
       setAiProgress(100);
+      setUploadProgress(50);
+      setProcessingStep('Starting file upload...');
     }
 
-    setProcessingStep('Uploading to server...');
     setFileStep('Uploading file...');
+    setProcessingStep('Uploading file to server...');
     
     const formData = new FormData();
     formData.append('file', file!);
     formData.append('title', title);
     formData.append('citation', citation);
+    formData.append('author', author);
+    formData.append('date_published', datePublished);
+    formData.append('keywords', keywords.join(', '));
     formData.append('type', type);
     formData.append('tags', tags.join(', '));
     if (finalSummary) {
@@ -585,8 +802,12 @@ const DocumentLibrary = ({
           if (event.lengthComputable) {
             const percentComplete = Math.round((event.loaded / event.total) * 100);
             setFileProgress(percentComplete);
+            setUploadProgress(50 + (percentComplete / 2));
             if (percentComplete === 100) {
               setFileStep('Finalizing...');
+              setProcessingStep('Finalizing document...');
+            } else {
+              setFileStep(`Uploading... ${percentComplete}%`);
             }
           }
         };
@@ -594,8 +815,9 @@ const DocumentLibrary = ({
         xhr.onload = () => {
           if (xhr.status >= 200 && xhr.status < 300) {
             setFileProgress(100);
+            setUploadProgress(100);
             setFileStep('Success!');
-            setProcessingStep('Success!');
+            setProcessingStep('Document Uploaded Successfully!');
             resolve(xhr.response);
           } else {
             reject(new Error(`Upload failed with status ${xhr.status}`));
@@ -608,6 +830,9 @@ const DocumentLibrary = ({
 
       setTitle('');
       setCitation('');
+      setAuthor('');
+      setDatePublished('');
+      setKeywords([]);
       setTags([]);
       setManualSummary('');
       setFile(null);
@@ -666,24 +891,30 @@ const DocumentLibrary = ({
 
   const handleBatchDelete = async () => {
     if (selectedIds.length === 0) return;
-    if (!confirm(`Are you sure you want to delete ${selectedIds.length} documents?`)) return;
-
-    setIsBatchDeleting(true);
-    try {
-      const res = await fetch('/api/documents/batch-delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: selectedIds }),
-      });
-      if (res.ok) {
-        setSelectedIds([]);
-        fetchDocuments();
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsBatchDeleting(false);
-    }
+    
+    showConfirm(
+      "Confirm Batch Deletion",
+      `Are you sure you want to delete ${selectedIds.length} documents? This action cannot be undone.`,
+      async () => {
+        setIsBatchDeleting(true);
+        try {
+          const res = await fetch('/api/documents/batch-delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: selectedIds }),
+          });
+          if (res.ok) {
+            setSelectedIds([]);
+            fetchDocuments();
+          }
+        } catch (err) {
+          console.error(err);
+        } finally {
+          setIsBatchDeleting(false);
+        }
+      },
+      'danger'
+    );
   };
 
   const handleBatchDownload = async () => {
@@ -787,7 +1018,19 @@ const DocumentLibrary = ({
               {
                 parts: [
                   {
-                    text: `Analyze the legal citations in this document. Identify the main citations and check if they are still valid and current (e.g., not overturned, repealed, or amended). Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and 'analysis' (a brief explanation of the validity of the citations found).
+                    text: `You are an expert Philippine Legal Researcher. Analyze the legal citations in the provided document.
+
+1. Identify all primary citations (Supreme Court cases, Republic Acts, Executive Orders, etc.).
+2. For each major citation, evaluate its current validity in Philippine jurisprudence:
+   - Is it still "Good Law"?
+   - Has it been explicitly or impliedly overturned by a more recent Supreme Court decision?
+   - Has the statute been repealed, amended, or declared unconstitutional?
+3. Assign an overall status:
+   - 'valid': All major citations are current and reliable.
+   - 'caution': Some citations are old or have been partially modified/clarified by later jurisprudence, or there are conflicting rulings.
+   - 'invalid': A major citation has been explicitly overturned or the law has been repealed.
+
+Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and 'analysis' (a detailed explanation of your findings, citing specific cases or laws that affect the validity).
                     
                     Document Content: ${data.content.substring(0, 30000)}`, // Limit content size for Gemini
                   },
@@ -795,6 +1038,7 @@ const DocumentLibrary = ({
               },
             ],
             config: {
+              thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
               responseMimeType: "application/json",
               responseSchema: {
                 type: Type.OBJECT,
@@ -873,28 +1117,57 @@ const DocumentLibrary = ({
               {
                 parts: [
                   {
-                    text: `Please provide a detailed legal summary of the following document. 
-                    Extract the Case Title, Case Citation (G.R. Number), Facts, Issues, Ruling, and a brief Legal Analysis highlighting the specific doctrine or legal principle established by the Court and its implications for Philippine jurisprudence.
-                    Return a JSON object with 'title', 'citation', 'facts', 'issues', 'ruling', and 'analysis'.
+                    text: `You are an expert Philippine Legal Researcher. Analyze the provided document and generate a structured legal summary.
+
+First, determine the document type:
+- CASE: A court decision (e.g., Supreme Court, Court of Appeals).
+- STATUTE: A law, Republic Act, or Ordinance.
+- ADMINISTRATIVE: An executive order, circular, or regulation.
+- OTHER: Any other legal document.
+
+Based on the type, extract:
+For CASES:
+- **Title**: Full case title.
+- **Citation**: G.R. Number and Date.
+- **Facts**: Concise summary of relevant facts.
+- **Issues**: The core legal questions addressed.
+- **Ruling**: The Court's decision.
+- **Analysis**: The Ratio Decidendi and established doctrine.
+
+For STATUTES/ADMINISTRATIVE:
+- **Title**: Official name/number.
+- **Citation**: Date of effectivity or publication.
+- **Facts**: Purpose or preamble summary.
+- **Issues**: Key provisions or changes introduced.
+- **Ruling**: Scope and applicability.
+- **Analysis**: Legal implications and related laws.
+
+Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'ruling', 'analysis', and 'key_doctrines' (an array of strings).
                     
-                    Document Content: ${data.content.substring(0, 30000)}`,
+                    Document Content: ${data.content.substring(0, 100000)}`,
                   },
                 ],
               },
             ],
             config: {
+              thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
               responseMimeType: "application/json",
               responseSchema: {
                 type: Type.OBJECT,
                 properties: {
+                  type: { type: Type.STRING, enum: ['CASE', 'STATUTE', 'ADMINISTRATIVE', 'OTHER'] },
                   title: { type: Type.STRING },
                   citation: { type: Type.STRING },
                   facts: { type: Type.STRING },
                   issues: { type: Type.STRING },
                   ruling: { type: Type.STRING },
                   analysis: { type: Type.STRING },
+                  key_doctrines: { 
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING }
+                  },
                 },
-                required: ['title', 'citation', 'facts', 'issues', 'ruling', 'analysis']
+                required: ['type', 'title', 'citation', 'facts', 'issues', 'ruling', 'analysis']
               }
             }
           });
@@ -979,23 +1252,58 @@ const DocumentLibrary = ({
   const handleUploadVersion = async (docId: number) => {
     if (!versionFile) return;
     setIsUploadingVersion(true);
+    setUploadProgress(0);
+    setFileProgress(0);
+    setFileStep('Preparing version...');
+    setProcessingStep('Uploading new version...');
+
     const formData = new FormData();
     formData.append('file', versionFile);
 
     try {
-      const res = await fetch(`/api/documents/${docId}/version`, {
-        method: 'POST',
-        body: formData,
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `/api/documents/${docId}/version`, true);
+        
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percentComplete = Math.round((event.loaded / event.total) * 100);
+            setFileProgress(percentComplete);
+            setUploadProgress(percentComplete);
+            setFileStep(`Uploading... ${percentComplete}%`);
+          }
+        };
+        
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            setFileProgress(100);
+            setUploadProgress(100);
+            setFileStep('Success!');
+            setProcessingStep('Version Uploaded Successfully!');
+            resolve(xhr.response);
+          } else {
+            reject(new Error(`Upload failed with status ${xhr.status}`));
+          }
+        };
+        
+        xhr.onerror = () => reject(new Error('Upload failed'));
+        xhr.send(formData);
       });
-      if (res.ok) {
-        setVersionFile(null);
-        setSelectedVersionDoc(null);
-        fetchDocuments();
-      }
+
+      setVersionFile(null);
+      setSelectedVersionDoc(null);
+      fetchDocuments();
     } catch (err) {
       console.error(err);
+      setProcessingStep('Version upload failed');
     } finally {
-      setIsUploadingVersion(false);
+      setTimeout(() => {
+        setIsUploadingVersion(false);
+        setUploadProgress(0);
+        setFileProgress(0);
+        setFileStep(null);
+        setProcessingStep(null);
+      }, 2000);
     }
   };
 
@@ -1007,10 +1315,51 @@ const DocumentLibrary = ({
       });
       if (res.ok) {
         setSelectedVersionDoc(null);
+        setComparingVersion(null);
+        setComparisonContent(null);
+        setViewingVersion(null);
         fetchDocuments();
       }
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleViewVersionContent = async (filename: string, version: any) => {
+    setViewingVersion(version);
+    setIsPreviewLoading(true);
+    try {
+      const res = await fetch(`/api/documents/preview/${filename}`);
+      const data = await res.json();
+      if (data.content) {
+        setPreviewContent(data.content);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsPreviewLoading(false);
+    }
+  };
+
+  const handleCompareVersion = async (currentFilename: string, targetFilename: string, targetVersion: any) => {
+    setIsComparisonLoading(true);
+    setComparingVersion(targetVersion);
+    try {
+      const [currentRes, targetRes] = await Promise.all([
+        fetch(`/api/documents/preview/${currentFilename}`),
+        fetch(`/api/documents/preview/${targetFilename}`)
+      ]);
+      const currentData = await currentRes.json();
+      const targetData = await targetRes.json();
+      
+      setComparisonContent({
+        current: currentData.content || "Content not available",
+        target: targetData.content || "Content not available"
+      });
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsComparisonLoading(false);
     }
   };
 
@@ -1026,7 +1375,10 @@ const DocumentLibrary = ({
         body: JSON.stringify({
           title: editTitle,
           citation: editCitation,
-          tags: editTags.join(', ')
+          tags: editTags.join(', '),
+          author: editAuthor,
+          date_published: editDatePublished,
+          keywords: editKeywords.join(', ')
         }),
       });
       if (res.ok) {
@@ -1051,6 +1403,9 @@ const DocumentLibrary = ({
         if (batchEditTitle) body.title = batchEditTitle;
         if (batchEditCitation) body.citation = batchEditCitation;
         if (batchEditTags.length > 0) body.tags = batchEditTags.join(', ');
+        if (batchEditAuthor) body.author = batchEditAuthor;
+        if (batchEditDatePublished) body.date_published = batchEditDatePublished;
+        if (batchEditKeywords.length > 0) body.keywords = batchEditKeywords.join(', ');
         
         if (Object.keys(body).length === 0) return Promise.resolve();
 
@@ -1066,6 +1421,9 @@ const DocumentLibrary = ({
       setBatchEditTitle('');
       setBatchEditCitation('');
       setBatchEditTags([]);
+      setBatchEditAuthor('');
+      setBatchEditDatePublished('');
+      setBatchEditKeywords([]);
       setSelectedIds([]);
       fetchDocuments();
     } catch (err) {
@@ -1183,6 +1541,22 @@ const DocumentLibrary = ({
     return Array.from(tagsSet).sort();
   }, [documents]);
 
+  const popularTags = useMemo(() => {
+    const tagCounts: Record<string, number> = {};
+    documents.forEach(doc => {
+      if (Array.isArray(doc.tags)) {
+        doc.tags.forEach(tag => {
+          const t = tag.trim();
+          tagCounts[t] = (tagCounts[t] || 0) + 1;
+        });
+      }
+    });
+    return Object.entries(tagCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([tag]) => tag);
+  }, [documents]);
+
   const filteredDocuments = useMemo(() => {
     let results = documents;
 
@@ -1209,12 +1583,16 @@ const DocumentLibrary = ({
         (analysisFilter === 'has-analysis' && doc.citation_analysis) || 
         (analysisFilter === 'no-analysis' && !doc.citation_analysis);
 
+      const matchesAuthor = !authorFilter || (doc.author && doc.author.toLowerCase().includes(authorFilter.toLowerCase()));
+      const matchesDatePublished = !datePublishedFilter || (doc.date_published && doc.date_published === datePublishedFilter);
+      const matchesKeyword = !keywordFilter || (Array.isArray(doc.keywords) && doc.keywords.some(k => k.toLowerCase().includes(keywordFilter.toLowerCase())));
+
       let matchesSize = true;
       if (sizeFilter === 'small') matchesSize = (doc.size || 0) < 1024 * 1024; // < 1MB
       else if (sizeFilter === 'medium') matchesSize = (doc.size || 0) >= 1024 * 1024 && (doc.size || 0) < 10 * 1024 * 1024; // 1MB - 10MB
       else if (sizeFilter === 'large') matchesSize = (doc.size || 0) >= 10 * 1024 * 1024; // > 10MB
       
-      return matchesType && matchesStartDate && matchesEndDate && matchesStatus && matchesSize && matchesTag && matchesCitation && matchesSummary && matchesAnalysis;
+      return matchesType && matchesStartDate && matchesEndDate && matchesStatus && matchesSize && matchesTag && matchesCitation && matchesSummary && matchesAnalysis && matchesAuthor && matchesDatePublished && matchesKeyword;
     });
 
     // Sorting logic
@@ -1224,6 +1602,12 @@ const DocumentLibrary = ({
       if (sortBy === 'size-desc') return (b.size || 0) - (a.size || 0);
       if (sortBy === 'size-asc') return (a.size || 0) - (b.size || 0);
       if (sortBy === 'title') return a.title.localeCompare(b.title);
+      if (sortBy === 'citation-status') {
+        const priority: Record<string, number> = { 'valid': 0, 'caution': 1, 'invalid': 2, 'unchecked': 3 };
+        const aStatus = a.citation_check?.status || 'unchecked';
+        const bStatus = b.citation_check?.status || 'unchecked';
+        return (priority[aStatus] ?? 3) - (priority[bStatus] ?? 3);
+      }
       return 0;
     });
   }, [documents, searchQuery, filter, startDate, endDate, sizeFilter, statusFilter, tagFilter, citationFilter, summaryFilter, analysisFilter, sortBy, fuse]);
@@ -1263,6 +1647,35 @@ const DocumentLibrary = ({
                   onChange={(e) => setCitation(e.target.value)}
                   placeholder="e.g., G.R. No. 245123"
                   className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-mono text-slate-400 uppercase">Author / Issuing Authority</label>
+                <input 
+                  type="text" 
+                  value={author}
+                  onChange={(e) => setAuthor(e.target.value)}
+                  placeholder="e.g., Justice Leonen, Congress"
+                  className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-mono text-slate-400 uppercase">Date Published / Promulgated</label>
+                <input 
+                  type="date" 
+                  value={datePublished}
+                  onChange={(e) => setDatePublished(e.target.value)}
+                  className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900 bg-transparent"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-mono text-slate-400 uppercase mb-2 block">Keywords</label>
+                <TagManager 
+                  tags={keywords}
+                  onAdd={(keyword) => setKeywords([...keywords, keyword])}
+                  onRemove={(keyword) => setKeywords(keywords.filter(k => k !== keyword))}
+                  allTags={[]}
+                  placeholder="Add keywords..."
                 />
               </div>
               <div>
@@ -1309,36 +1722,79 @@ const DocumentLibrary = ({
               </div>
 
               {isUploading && (
-                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-4">
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center text-[10px] font-mono uppercase">
-                      <span className="text-slate-500">AI Analysis</span>
-                      <span className={aiProgress === 100 ? 'text-emerald-500' : 'text-indigo-500'}>
-                        {aiStep || 'Pending...'} {aiProgress}%
-                      </span>
+                <div className="p-5 bg-slate-50 rounded-xl border border-slate-200 space-y-5 shadow-inner">
+                  <div className="flex items-center gap-3 pb-2 border-b border-slate-200">
+                    <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600">
+                      <div className="w-4 h-4 border-2 border-indigo-600/20 border-t-indigo-600 rounded-full animate-spin" />
                     </div>
-                    <div className="h-1 bg-slate-200 rounded-full overflow-hidden">
-                      <motion.div 
-                        className={`h-full ${aiProgress === 100 ? 'bg-emerald-500' : 'bg-indigo-500'}`}
-                        initial={{ width: 0 }}
-                        animate={{ width: `${aiProgress}%` }}
-                        transition={{ duration: 0.3 }}
-                      />
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-900">Processing Document</h4>
+                      <p className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">{processingStep || 'Initializing...'}</p>
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center text-[10px] font-mono uppercase">
-                      <span className="text-slate-500">File Upload</span>
-                      <span className={fileProgress === 100 ? 'text-emerald-500' : 'text-indigo-500'}>
-                        {fileStep || 'Pending...'} {fileProgress}%
-                      </span>
+
+                  <div className="space-y-6">
+                    {/* AI Analysis Stage */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-5 h-5 rounded-full flex items-center justify-center ${aiProgress === 100 ? 'bg-emerald-100 text-emerald-600' : 'bg-indigo-100 text-indigo-600'}`}>
+                            {aiProgress === 100 ? <Check size={12} /> : <BrainCircuit size={12} />}
+                          </div>
+                          <span className="text-[11px] font-bold text-slate-700">AI Legal Analysis</span>
+                        </div>
+                        <span className={`text-[10px] font-mono ${aiProgress === 100 ? 'text-emerald-500' : 'text-indigo-500'}`}>
+                          {aiProgress}%
+                        </span>
+                      </div>
+                      <div className="pl-7">
+                        <p className="text-[10px] text-slate-400 italic mb-2">{aiStep || 'Waiting to start...'}</p>
+                        <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                          <motion.div 
+                            className={`h-full transition-all duration-500 ${aiProgress === 100 ? 'bg-emerald-500' : 'bg-indigo-500'}`}
+                            initial={{ width: 0 }}
+                            animate={{ width: `${aiProgress}%` }}
+                          />
+                        </div>
+                      </div>
                     </div>
-                    <div className="h-1 bg-slate-200 rounded-full overflow-hidden">
+
+                    {/* File Upload Stage */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-5 h-5 rounded-full flex items-center justify-center ${fileProgress === 100 ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-600'}`}>
+                            {fileProgress === 100 ? <Check size={12} /> : <Upload size={12} />}
+                          </div>
+                          <span className="text-[11px] font-bold text-slate-700">Secure File Upload</span>
+                        </div>
+                        <span className={`text-[10px] font-mono ${fileProgress === 100 ? 'text-emerald-500' : 'text-slate-500'}`}>
+                          {fileProgress}%
+                        </span>
+                      </div>
+                      <div className="pl-7">
+                        <p className="text-[10px] text-slate-400 italic mb-2">{fileStep || 'Queued...'}</p>
+                        <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                          <motion.div 
+                            className={`h-full transition-all duration-500 ${fileProgress === 100 ? 'bg-emerald-500' : 'bg-slate-400'}`}
+                            initial={{ width: 0 }}
+                            animate={{ width: `${fileProgress}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-200">
+                    <div className="flex justify-between items-center text-[9px] font-bold text-slate-400 uppercase mb-1.5 tracking-widest">
+                      <span>Total Progress</span>
+                      <span>{Math.round(uploadProgress)}%</span>
+                    </div>
+                    <div className="h-2 bg-slate-200 rounded-full overflow-hidden p-0.5">
                       <motion.div 
-                        className={`h-full ${fileProgress === 100 ? 'bg-emerald-500' : 'bg-indigo-500'}`}
+                        className="h-full bg-slate-900 rounded-full"
                         initial={{ width: 0 }}
-                        animate={{ width: `${fileProgress}%` }}
-                        transition={{ duration: 0.3 }}
+                        animate={{ width: `${uploadProgress}%` }}
                       />
                     </div>
                   </div>
@@ -1457,7 +1913,7 @@ const DocumentLibrary = ({
               
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-2">
-                  <Filter size={14} className="text-slate-400" />
+                  <FileText size={14} className="text-slate-400" />
                   <span className="text-[10px] font-mono text-slate-400 uppercase">Case Type:</span>
                   <select 
                     value={filter}
@@ -1500,6 +1956,7 @@ const DocumentLibrary = ({
 
                 <div className="flex items-center gap-2">
                   <Database size={14} className="text-slate-400" />
+                  <span className="text-[10px] font-mono text-slate-400 uppercase">Size:</span>
                   <select 
                     value={sizeFilter}
                     onChange={(e) => setSizeFilter(e.target.value as any)}
@@ -1514,6 +1971,7 @@ const DocumentLibrary = ({
 
                 <div className="flex items-center gap-2">
                   <Activity size={14} className="text-slate-400" />
+                  <span className="text-[10px] font-mono text-slate-400 uppercase">Status:</span>
                   <select 
                     value={statusFilter}
                     onChange={(e) => setStatusFilter(e.target.value as any)}
@@ -1528,6 +1986,24 @@ const DocumentLibrary = ({
 
                 <div className="flex items-center gap-2 relative">
                   <Tag size={14} className="text-slate-400" />
+                  <span className="text-[10px] font-mono text-slate-400 uppercase">Tag:</span>
+                  {popularTags.length > 0 && (
+                    <div className="flex items-center gap-1 overflow-x-auto max-w-[200px] no-scrollbar py-1">
+                      {popularTags.map(tag => (
+                        <button
+                          key={tag}
+                          onClick={() => setTagFilter(tag === tagFilter ? 'all' : tag)}
+                          className={`text-[9px] px-2 py-0.5 rounded-full border transition-all whitespace-nowrap ${
+                            tag === tagFilter 
+                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
+                              : 'bg-white text-slate-500 border-slate-200 hover:border-indigo-300 hover:text-indigo-600'
+                          }`}
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div className="relative group">
                     <input 
                       type="text"
@@ -1599,21 +2075,43 @@ const DocumentLibrary = ({
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <FileText size={14} className="text-slate-400" />
-                  <select 
-                    value={filter}
-                    onChange={(e) => setFilter(e.target.value as any)}
+                  <User size={14} className="text-slate-400" />
+                  <span className="text-[10px] font-mono text-slate-400 uppercase">Author:</span>
+                  <input 
+                    type="text" 
+                    value={authorFilter}
+                    onChange={(e) => setAuthorFilter(e.target.value)}
+                    placeholder="Filter by author..."
+                    className="text-xs font-medium bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 w-[150px]"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Calendar size={14} className="text-slate-400" />
+                  <span className="text-[10px] font-mono text-slate-400 uppercase">Pub. Date:</span>
+                  <input 
+                    type="date" 
+                    value={datePublishedFilter}
+                    onChange={(e) => setDatePublishedFilter(e.target.value)}
                     className="text-xs font-medium bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                  >
-                    <option value="all">All Types</option>
-                    <option value="case">Case Law</option>
-                    <option value="statute">Statute</option>
-                    <option value="memo">Legal Memo</option>
-                  </select>
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Tag size={14} className="text-slate-400" />
+                  <span className="text-[10px] font-mono text-slate-400 uppercase">Keyword:</span>
+                  <input 
+                    type="text" 
+                    value={keywordFilter}
+                    onChange={(e) => setKeywordFilter(e.target.value)}
+                    placeholder="Filter by keyword..."
+                    className="text-xs font-medium bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 w-[150px]"
+                  />
                 </div>
 
                 <div className="flex items-center gap-2">
                   <BrainCircuit size={14} className="text-slate-400" />
+                  <span className="text-[10px] font-mono text-slate-400 uppercase">AI Summary:</span>
                   <select 
                     value={summaryFilter}
                     onChange={(e) => setSummaryFilter(e.target.value as any)}
@@ -1627,6 +2125,7 @@ const DocumentLibrary = ({
 
                 <div className="flex items-center gap-2">
                   <Scale size={14} className="text-slate-400" />
+                  <span className="text-[10px] font-mono text-slate-400 uppercase">Analysis:</span>
                   <select 
                     value={analysisFilter}
                     onChange={(e) => setAnalysisFilter(e.target.value as any)}
@@ -1640,6 +2139,7 @@ const DocumentLibrary = ({
 
                 <div className="flex items-center gap-2">
                   <ShieldAlert size={14} className="text-slate-400" />
+                  <span className="text-[10px] font-mono text-slate-400 uppercase">Citations:</span>
                   <select 
                     value={citationFilter}
                     onChange={(e) => setCitationFilter(e.target.value as any)}
@@ -1655,13 +2155,15 @@ const DocumentLibrary = ({
 
                 <div className="flex items-center gap-2">
                   <ArrowUpDown size={14} className="text-slate-400" />
+                  <span className="text-[10px] font-mono text-slate-400 uppercase">Sort By:</span>
                   <select 
                     value={sortBy}
                     onChange={(e) => setSortBy(e.target.value as any)}
                     className="text-xs font-medium bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                   >
-                    <option value="newest">Newest First</option>
-                    <option value="oldest">Oldest First</option>
+                    <option value="newest">Upload Date (Newest)</option>
+                    <option value="oldest">Upload Date (Oldest)</option>
+                    <option value="citation-status">Citation Status (Valid First)</option>
                     <option value="size-desc">Size (Large to Small)</option>
                     <option value="size-asc">Size (Small to Large)</option>
                     <option value="title">Title (A-Z)</option>
@@ -1803,12 +2305,21 @@ const DocumentLibrary = ({
                           setExpandedDocId(expandedDocId === doc.id ? null : doc.id);
                         }
                       }}
-                      className={`flex items-center justify-between p-4 border rounded-xl transition-all group ${
+                      className={`flex items-center justify-between p-4 border rounded-xl transition-all group relative overflow-hidden ${
                         selectedIds.includes(doc.id) 
                           ? 'bg-indigo-50/50 border-indigo-200 shadow-sm' 
                           : 'border-slate-100 hover:bg-slate-50'
                       } ${doc.legal_summary ? 'cursor-pointer' : ''}`}
                     >
+                      {/* Citation Status Indicator Bar */}
+                      {doc.citation_check && (
+                        <div className={`absolute left-0 top-0 bottom-0 w-1 ${
+                          doc.citation_check.status === 'valid' ? 'bg-emerald-500' :
+                          doc.citation_check.status === 'caution' ? 'bg-amber-500' :
+                          doc.citation_check.status === 'invalid' ? 'bg-red-500' :
+                          'bg-slate-300'
+                        }`} />
+                      )}
                       <div className="flex items-center gap-4">
                         <button 
                           onClick={(e) => {
@@ -1821,12 +2332,27 @@ const DocumentLibrary = ({
                         >
                           {selectedIds.includes(doc.id) ? <CheckSquare size={18} /> : <Square size={18} />}
                         </button>
-                        <div className={`p-2 rounded-lg ${
-                          doc.type === 'case' ? 'bg-blue-50 text-blue-600' :
-                          doc.type === 'statute' ? 'bg-emerald-50 text-emerald-600' :
-                          'bg-amber-50 text-amber-600'
-                        }`}>
-                          <FileText size={20} />
+                        <div className="relative">
+                          <div className={`p-2 rounded-lg ${
+                            doc.type === 'case' ? 'bg-blue-50 text-blue-600' :
+                            doc.type === 'statute' ? 'bg-emerald-50 text-emerald-600' :
+                            'bg-amber-50 text-amber-600'
+                          }`}>
+                            <FileText size={20} />
+                          </div>
+                          {doc.citation_check && (
+                            <div className={`absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full border-2 border-white flex items-center justify-center ${
+                              doc.citation_check.status === 'valid' ? 'bg-emerald-500' :
+                              doc.citation_check.status === 'caution' ? 'bg-amber-500' :
+                              doc.citation_check.status === 'invalid' ? 'bg-red-500' :
+                              'bg-slate-300'
+                            }`}>
+                              {doc.citation_check.status === 'valid' ? <Check size={8} className="text-white" /> : 
+                               doc.citation_check.status === 'caution' ? <ShieldAlert size={8} className="text-white" /> : 
+                               doc.citation_check.status === 'invalid' ? <X size={8} className="text-white" /> :
+                               <Info size={8} className="text-white" />}
+                            </div>
+                          )}
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
@@ -1847,31 +2373,85 @@ const DocumentLibrary = ({
                             {doc.citation_check && (
                               <span 
                                 title={doc.citation_check.analysis}
-                                className={`flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter border cursor-help ${
-                                  doc.citation_check.status === 'valid' ? 'bg-green-100 text-green-700 border-green-200' :
-                                  doc.citation_check.status === 'caution' ? 'bg-amber-100 text-amber-700 border-amber-200' :
-                                  doc.citation_check.status === 'invalid' ? 'bg-red-100 text-red-700 border-red-200' :
-                                  'bg-slate-100 text-slate-600 border-slate-200'
+                                className={`flex items-center gap-1.5 text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border cursor-help shadow-sm transition-all hover:scale-105 ${
+                                  doc.citation_check.status === 'valid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 shadow-emerald-100/50' :
+                                  doc.citation_check.status === 'caution' ? 'bg-amber-50 text-amber-700 border-amber-200 shadow-amber-100/50' :
+                                  doc.citation_check.status === 'invalid' ? 'bg-red-50 text-red-700 border-red-200 shadow-red-100/50' :
+                                  'bg-slate-50 text-slate-600 border-slate-200'
                                 }`}
                               >
-                                {doc.citation_check.status === 'valid' ? <Check size={10} /> : 
-                                 doc.citation_check.status === 'caution' ? <ShieldAlert size={10} /> : 
-                                 doc.citation_check.status === 'invalid' ? <X size={10} /> :
-                                 <Info size={10} />}
+                                {doc.citation_check.status === 'valid' ? <Check size={10} className="text-emerald-500" /> : 
+                                 doc.citation_check.status === 'caution' ? <ShieldAlert size={10} className="text-amber-500" /> : 
+                                 doc.citation_check.status === 'invalid' ? <X size={10} className="text-red-500" /> :
+                                 <Info size={10} className="text-slate-400" />}
                                 Citations: {doc.citation_check.status}
                               </span>
                             )}
                           </div>
+                          {doc.tags && doc.tags.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mt-2 mb-2 items-center">
+                              {doc.tags.map((tag, idx) => (
+                                <button 
+                                  key={idx} 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setTagFilter(tag.trim());
+                                  }}
+                                  className="text-[10px] px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-full font-bold border border-indigo-100 hover:bg-indigo-100 transition-colors flex items-center gap-1"
+                                >
+                                  <Tag size={8} />
+                                  {highlightText(tag.trim(), searchQuery)}
+                                </button>
+                              ))}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEditingDoc(doc);
+                                  setEditTitle(doc.title);
+                                  setEditCitation(doc.citation || '');
+                                  setEditTags(Array.isArray(doc.tags) ? [...doc.tags] : []);
+                                  setEditAuthor(doc.author || '');
+                                  setEditDatePublished(doc.date_published || '');
+                                  setEditKeywords(Array.isArray(doc.keywords) ? [...doc.keywords] : []);
+                                }}
+                                className="p-1 text-slate-400 hover:text-indigo-600 transition-colors"
+                                title="Manage Tags"
+                              >
+                                <Plus size={12} />
+                              </button>
+                            </div>
+                          )}
+                          {doc.keywords && doc.keywords.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mt-1 mb-2 items-center">
+                              {doc.keywords.map((keyword, idx) => (
+                                <button 
+                                  key={idx} 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setKeywordFilter(keyword.trim());
+                                  }}
+                                  className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full font-medium border border-slate-200 hover:bg-slate-200 transition-colors flex items-center gap-1"
+                                >
+                                  <Hash size={8} />
+                                  {highlightText(keyword.trim(), searchQuery)}
+                                </button>
+                              ))}
+                            </div>
+                          )}
                           {doc.citation_check && doc.citation_check.status !== 'valid' && (
-                            <div className={`text-[10px] mt-2 p-2 rounded-lg border flex items-start gap-2 max-w-md ${
+                            <div className={`text-[10px] mt-2 p-3 rounded-xl border flex items-start gap-3 max-w-md shadow-sm transition-all hover:shadow-md ${
                               doc.citation_check.status === 'caution' 
-                                ? 'bg-amber-50 border-amber-100 text-amber-700' 
-                                : 'bg-red-50 border-red-100 text-red-700'
+                                ? 'bg-amber-50/50 border-amber-100 text-amber-800' 
+                                : 'bg-red-50/50 border-red-100 text-red-800'
                             }`}>
-                              <Info size={12} className="mt-0.5 shrink-0" />
+                              <div className={`p-1 rounded-full ${
+                                doc.citation_check.status === 'caution' ? 'bg-amber-100' : 'bg-red-100'
+                              }`}>
+                                {doc.citation_check.status === 'caution' ? <ShieldAlert size={12} className="text-amber-600" /> : <X size={12} className="text-red-600" />}
+                              </div>
                               <div>
-                                <span className="font-bold uppercase text-[8px] block mb-0.5">Citation Analysis:</span>
-                                <p className="italic leading-tight">{doc.citation_check.analysis}</p>
+                                <span className="font-bold uppercase text-[9px] block mb-1 tracking-wider">Citation Analysis Alert</span>
+                                <p className="italic leading-relaxed opacity-90">{doc.citation_check.analysis}</p>
                               </div>
                             </div>
                           )}
@@ -1883,26 +2463,28 @@ const DocumentLibrary = ({
                                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">AI Summary Available</span>
                                 </div>
                               )}
-                              {doc.tags && doc.tags.length > 0 && (
-                                <div className="flex flex-wrap gap-1 mt-1 mb-1">
-                                  {doc.tags.map((tag, idx) => (
-                                    <button 
-                                      key={idx} 
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setTagFilter(tag.trim());
-                                      }}
-                                      className="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded-full font-medium hover:bg-indigo-100 hover:text-indigo-600 transition-colors"
-                                    >
-                                      {highlightText(tag.trim(), searchQuery)}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
                               <div className="flex items-center gap-3 text-xs text-slate-500 mb-1">
                                 <span className="uppercase font-mono">{doc.type}</span>
                                 <span>•</span>
                                 <span>{new Date(doc.uploaded_at).toLocaleDateString()}</span>
+                                {doc.author && (
+                                  <>
+                                    <span>•</span>
+                                    <span className="flex items-center gap-1">
+                                      <User size={10} />
+                                      {highlightText(doc.author, searchQuery)}
+                                    </span>
+                                  </>
+                                )}
+                                {doc.date_published && (
+                                  <>
+                                    <span>•</span>
+                                    <span className="flex items-center gap-1">
+                                      <Calendar size={10} />
+                                      {new Date(doc.date_published).toLocaleDateString()}
+                                    </span>
+                                  </>
+                                )}
                                 {doc.size && (
                                   <>
                                     <span>•</span>
@@ -1941,6 +2523,9 @@ const DocumentLibrary = ({
                             setEditTitle(doc.title);
                             setEditCitation(doc.citation || '');
                             setEditTags(Array.isArray(doc.tags) ? [...doc.tags] : []);
+                            setEditAuthor(doc.author || '');
+                            setEditDatePublished(doc.date_published || '');
+                            setEditKeywords(Array.isArray(doc.keywords) ? [...doc.keywords] : []);
                           }}
                           className="p-2 text-slate-400 hover:text-indigo-600 transition-colors"
                           title="Edit Metadata"
@@ -2067,8 +2652,22 @@ const DocumentLibrary = ({
                                       initial={{ opacity: 0, y: -10 }}
                                       animate={{ opacity: 1, y: 0 }}
                                       exit={{ opacity: 0, y: -10 }}
-                                      className="grid grid-cols-1 md:grid-cols-2 gap-6"
                                     >
+                                      <div className="flex items-center gap-2 mb-4">
+                                        <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full font-bold uppercase tracking-wider">
+                                          {doc.legal_summary.type || 'DOCUMENT'}
+                                        </span>
+                                        {doc.legal_summary.key_doctrines && doc.legal_summary.key_doctrines.length > 0 && (
+                                          <div className="flex flex-wrap gap-1">
+                                            {doc.legal_summary.key_doctrines.map((doctrine, idx) => (
+                                              <span key={idx} className="text-[9px] px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-full font-medium border border-indigo-100">
+                                                {doctrine}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                       <div className="space-y-4">
                                         <div className="bg-white p-3 rounded-lg border border-slate-100 shadow-sm">
                                           <div className="flex items-center gap-2 mb-1.5">
@@ -2109,6 +2708,7 @@ const DocumentLibrary = ({
                                           </p>
                                         </div>
                                       </div>
+                                      </div>
                                     </motion.div>
                                   ) : (
                                     <div className="text-center py-4 bg-white/50 rounded-lg border border-dashed border-slate-200">
@@ -2131,12 +2731,12 @@ const DocumentLibrary = ({
                                     } />
                                     <h5 className="font-bold text-slate-900 uppercase tracking-wider text-xs">Citation Analysis & Risk Assessment</h5>
                                   </div>
-                                  {doc.citation_analysis && (
+                                  {(doc.citation_check || doc.citation_analysis) && (
                                     <button 
                                       onClick={() => handleExportCitationAnalysis(doc)}
                                       className="text-[10px] bg-white border border-slate-200 text-slate-600 px-3 py-1 rounded-full font-bold hover:bg-slate-50 transition-colors flex items-center gap-1"
                                     >
-                                      <Download size={10} /> Export Risk Analysis
+                                      <Download size={10} /> Export Citation Analysis
                                     </button>
                                   )}
                                 </div>
@@ -2180,11 +2780,18 @@ const DocumentLibrary = ({
                             <div className="mt-4 pt-4 border-t border-slate-200 flex items-center justify-between">
                               <div className="flex items-center gap-4">
                                 <div className="flex flex-wrap gap-1">
-                                  {doc.tags?.map((tag, idx) => (
-                                    <span key={idx} className="text-[9px] px-1.5 py-0.5 bg-white border border-slate-200 text-slate-500 rounded-full">
-                                      {tag}
-                                    </span>
-                                  ))}
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditingDoc(doc);
+                                      setEditTitle(doc.title);
+                                      setEditCitation(doc.citation || '');
+                                      setEditTags(Array.isArray(doc.tags) ? [...doc.tags] : []);
+                                    }}
+                                    className="text-[10px] bg-slate-50 border border-slate-200 text-slate-500 px-3 py-1 rounded-full font-bold hover:bg-slate-100 transition-colors flex items-center gap-1"
+                                  >
+                                    <Plus size={10} /> Manage Tags
+                                  </button>
                                 </div>
                               </div>
                               <div className="text-[10px] text-slate-400 italic">
@@ -2203,7 +2810,7 @@ const DocumentLibrary = ({
         </div>
       </div>
 
-      {/* Preview Modal */}
+      {/* Version History Modal */}
       <AnimatePresence>
         {selectedVersionDoc && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
@@ -2214,12 +2821,20 @@ const DocumentLibrary = ({
               className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden"
             >
               <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                <div>
-                  <h3 className="text-xl font-serif font-bold text-slate-900">Version History</h3>
-                  <p className="text-sm text-slate-500">{selectedVersionDoc.title}</p>
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg">
+                    <HistoryIcon size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-serif font-bold text-slate-900">Version History</h3>
+                    <p className="text-sm text-slate-500">{selectedVersionDoc.title}</p>
+                  </div>
                 </div>
                 <button 
-                  onClick={() => setSelectedVersionDoc(null)}
+                  onClick={() => {
+                    setSelectedVersionDoc(null);
+                    setVersionFile(null);
+                  }}
                   className="p-2 text-slate-400 hover:text-slate-900 transition-colors"
                 >
                   <X size={20} />
@@ -2227,16 +2842,16 @@ const DocumentLibrary = ({
               </div>
 
               <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-xl">
-                  <h4 className="text-xs font-mono text-indigo-600 uppercase tracking-widest mb-3 font-bold">Current Version (v{selectedVersionDoc.version})</h4>
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm">
-                      <p className="font-medium text-slate-900">{selectedVersionDoc.filename}</p>
-                      <p className="text-slate-500 text-xs">{new Date(selectedVersionDoc.uploaded_at).toLocaleString()}</p>
-                    </div>
+                {/* Current Version */}
+                <div className="p-5 bg-indigo-50/50 border border-indigo-100 rounded-2xl">
+                  <div className="flex items-center justify-between mb-4">
+                    <h4 className="text-[10px] font-mono text-indigo-600 uppercase tracking-widest font-bold flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 bg-indigo-600 rounded-full animate-pulse" />
+                      Current Version (v{selectedVersionDoc.version})
+                    </h4>
                     <div className="flex items-center gap-2">
-                      <label className="cursor-pointer px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors">
-                        <Upload size={12} className="inline mr-1" /> New Version
+                      <label className="cursor-pointer px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition-all shadow-sm flex items-center gap-2">
+                        <Upload size={14} /> Upload New
                         <input 
                           type="file" 
                           className="hidden" 
@@ -2248,65 +2863,236 @@ const DocumentLibrary = ({
                       </label>
                     </div>
                   </div>
-                  {versionFile && (
-                    <div className="mt-3 flex items-center justify-between p-2 bg-white rounded-lg border border-indigo-200">
-                      <span className="text-xs text-slate-600 truncate max-w-[200px]">{versionFile.name}</span>
-                      <div className="flex items-center gap-2">
-                        <button 
-                          onClick={() => handleUploadVersion(selectedVersionDoc.id)}
-                          disabled={isUploadingVersion}
-                          className="text-xs text-emerald-600 font-bold hover:text-emerald-700"
-                        >
-                          {isUploadingVersion ? 'Uploading...' : 'Confirm'}
-                        </button>
-                        <button 
-                          onClick={() => setVersionFile(null)}
-                          className="text-xs text-red-500 font-bold"
-                        >
-                          Cancel
-                        </button>
-                      </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm">
+                      <p className="font-medium text-slate-900 truncate max-w-[300px]">{selectedVersionDoc.filename}</p>
+                      <p className="text-slate-500 text-xs flex items-center gap-2 mt-1">
+                        <Clock size={12} /> {new Date(selectedVersionDoc.uploaded_at).toLocaleString()} • {((selectedVersionDoc.size || 0) / 1024).toFixed(1)} KB
+                      </p>
                     </div>
+                    <button 
+                      onClick={() => handleViewVersionContent(selectedVersionDoc.filename, { version: selectedVersionDoc.version, uploaded_at: selectedVersionDoc.uploaded_at })}
+                      className="p-2 text-slate-400 hover:text-indigo-600 transition-colors"
+                      title="View current content"
+                    >
+                      <Eye size={18} />
+                    </button>
+                  </div>
+
+                  {versionFile && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="mt-4 p-3 bg-white rounded-xl border border-indigo-200 shadow-sm"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 overflow-hidden">
+                          <FileText size={16} className="text-indigo-400 flex-shrink-0" />
+                          <span className="text-xs text-slate-600 truncate font-medium">{versionFile.name}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {!isUploadingVersion && (
+                            <>
+                              <button 
+                                onClick={() => handleUploadVersion(selectedVersionDoc.id)}
+                                className="px-3 py-1 bg-emerald-600 text-white rounded-lg text-[10px] font-bold hover:bg-emerald-700 transition-colors"
+                              >
+                                Confirm
+                              </button>
+                              <button 
+                                onClick={() => setVersionFile(null)}
+                                className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-[10px] font-bold hover:bg-slate-200 transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {isUploadingVersion && (
+                        <div className="mt-3 space-y-2">
+                          <div className="flex justify-between items-center text-[9px] font-mono uppercase tracking-wider">
+                            <span className="text-slate-500">{fileStep || 'Uploading...'}</span>
+                            <span className="text-indigo-600 font-bold">{fileProgress}%</span>
+                          </div>
+                          <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                            <motion.div 
+                              className="h-full bg-indigo-500"
+                              initial={{ width: 0 }}
+                              animate={{ width: `${fileProgress}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </motion.div>
                   )}
                 </div>
 
+                {/* Previous Versions */}
                 <div className="space-y-3">
-                  <h4 className="text-xs font-mono text-slate-400 uppercase tracking-widest px-2">Previous Versions</h4>
+                  <h4 className="text-[10px] font-mono text-slate-400 uppercase tracking-widest px-2 font-bold">Previous Versions History</h4>
                   {(!selectedVersionDoc.versions || selectedVersionDoc.versions.length === 0) ? (
-                    <p className="text-sm text-slate-400 italic text-center py-4">No previous versions available.</p>
+                    <div className="flex flex-col items-center justify-center py-12 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                      <HistoryIcon size={32} className="text-slate-300 mb-2" />
+                      <p className="text-sm text-slate-400 italic">No previous versions available.</p>
+                    </div>
                   ) : (
-                    selectedVersionDoc.versions.map((v) => (
-                      <div key={v.id} className="flex items-center justify-between p-4 border border-slate-100 rounded-xl hover:bg-slate-50 transition-colors">
-                        <div>
-                          <p className="text-sm font-medium text-slate-900">Version {v.version}</p>
-                          <p className="text-xs text-slate-500">{new Date(v.uploaded_at).toLocaleString()} • {(v.size / 1024).toFixed(1)} KB</p>
+                    <div className="space-y-2">
+                      {selectedVersionDoc.versions.map((v) => (
+                        <div key={v.id} className="group flex items-center justify-between p-4 border border-slate-100 rounded-2xl hover:border-indigo-100 hover:bg-indigo-50/20 transition-all">
+                          <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 bg-slate-100 text-slate-500 rounded-xl flex items-center justify-center font-serif font-bold text-xs group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">
+                              v{v.version}
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold text-slate-900">Version {v.version}</p>
+                              <p className="text-[10px] text-slate-500 flex items-center gap-1 mt-0.5">
+                                <Clock size={10} /> {new Date(v.uploaded_at).toLocaleString()} • {(v.size / 1024).toFixed(1)} KB
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button 
+                              onClick={() => handleViewVersionContent(v.filename, v)}
+                              className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-all"
+                              title="View content"
+                            >
+                              <Eye size={16} />
+                            </button>
+                            <button 
+                              onClick={() => handleCompareVersion(selectedVersionDoc.filename, v.filename, v)}
+                              className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-all"
+                              title="Compare with current"
+                            >
+                              <GitCompare size={16} />
+                            </button>
+                            <button 
+                              onClick={() => handleRevert(selectedVersionDoc.id, v.id)}
+                              className="px-3 py-1.5 text-indigo-600 hover:bg-white rounded-lg text-[10px] font-bold transition-all"
+                            >
+                              Revert
+                            </button>
+                            <a 
+                              href={`/api/documents/download/${v.filename}`}
+                              className="p-2 text-slate-400 hover:text-slate-900 hover:bg-white rounded-lg transition-all"
+                              title="Download"
+                            >
+                              <Download size={16} />
+                            </a>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <button 
-                            onClick={() => handleRevert(selectedVersionDoc.id, v.id)}
-                            className="px-3 py-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg text-xs font-bold transition-colors"
-                          >
-                            Revert
-                          </button>
-                          <a 
-                            href={`/api/documents/download/${v.filename}`}
-                            className="p-2 text-slate-400 hover:text-slate-900 transition-colors"
-                            title="Download this version"
-                          >
-                            <Download size={16} />
-                          </a>
-                        </div>
-                      </div>
-                    ))
+                      ))}
+                    </div>
                   )}
                 </div>
               </div>
             </motion.div>
           </div>
         )}
+      </AnimatePresence>
 
-        {previewDoc && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+      {/* Comparison Modal */}
+      <AnimatePresence>
+        {comparingVersion && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-indigo-600 text-white rounded-2xl shadow-lg shadow-indigo-200">
+                    <GitCompare size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-2xl font-serif font-bold text-slate-900">Version Comparison</h3>
+                    <p className="text-sm text-slate-500">Comparing Current (v{selectedVersionDoc?.version}) vs Version {comparingVersion.version}</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => {
+                    setComparingVersion(null);
+                    setComparisonContent(null);
+                  }}
+                  className="p-3 hover:bg-slate-200 rounded-full transition-colors"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-hidden flex flex-col">
+                {isComparisonLoading ? (
+                  <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
+                    <div className="w-12 h-12 border-4 border-slate-100 border-t-indigo-600 rounded-full animate-spin mb-4" />
+                    <p className="font-serif italic text-lg">Analyzing differences...</p>
+                  </div>
+                ) : comparisonContent ? (
+                  <div className="flex-1 overflow-hidden grid grid-cols-2 divide-x divide-slate-200">
+                    <div className="flex flex-col h-full overflow-hidden">
+                      <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                        <span className="text-xs font-mono font-bold text-slate-500 uppercase tracking-widest">Current Version (v{selectedVersionDoc?.version})</span>
+                        <span className="text-[10px] text-slate-400">{new Date(selectedVersionDoc?.uploaded_at || '').toLocaleString()}</span>
+                      </div>
+                      <div className="flex-1 overflow-y-auto p-6 bg-white">
+                        <pre className="whitespace-pre-wrap font-sans text-sm text-slate-700 leading-relaxed">
+                          {comparisonContent.current}
+                        </pre>
+                      </div>
+                    </div>
+                    <div className="flex flex-col h-full overflow-hidden">
+                      <div className="p-4 bg-indigo-50 border-b border-indigo-100 flex items-center justify-between">
+                        <span className="text-xs font-mono font-bold text-indigo-600 uppercase tracking-widest">Version {comparingVersion.version}</span>
+                        <span className="text-[10px] text-indigo-400">{new Date(comparingVersion.uploaded_at).toLocaleString()}</span>
+                      </div>
+                      <div className="flex-1 overflow-y-auto p-6 bg-indigo-50/10">
+                        <pre className="whitespace-pre-wrap font-sans text-sm text-slate-700 leading-relaxed">
+                          {comparisonContent.target}
+                        </pre>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center text-slate-400">
+                    <p>Failed to load comparison content.</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-6 border-t border-slate-100 bg-slate-50 flex items-center justify-between">
+                <div className="text-sm text-slate-500 italic">
+                  Note: This is a side-by-side text comparison.
+                </div>
+                <div className="flex items-center gap-3">
+                  <button 
+                    onClick={() => {
+                      setComparingVersion(null);
+                      setComparisonContent(null);
+                    }}
+                    className="px-6 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-200 rounded-xl transition-all"
+                  >
+                    Close Comparison
+                  </button>
+                  <button 
+                    onClick={() => handleRevert(selectedVersionDoc!.id, comparingVersion.id)}
+                    className="px-8 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 flex items-center gap-2"
+                  >
+                    <RotateCcw size={18} /> Revert to Version {comparingVersion.version}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Preview Modal */}
+      <AnimatePresence>
+        {(previewDoc || viewingVersion) && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -2316,28 +3102,34 @@ const DocumentLibrary = ({
               <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                 <div className="flex items-center gap-4">
                   <div className={`p-2 rounded-lg ${
-                    previewDoc.type === 'case' ? 'bg-blue-50 text-blue-600' :
-                    previewDoc.type === 'statute' ? 'bg-emerald-50 text-emerald-600' :
+                    (previewDoc?.type || 'case') === 'case' ? 'bg-blue-50 text-blue-600' :
+                    (previewDoc?.type || 'case') === 'statute' ? 'bg-emerald-50 text-emerald-600' :
                     'bg-amber-50 text-amber-600'
                   }`}>
                     <FileText size={24} />
                   </div>
                   <div>
                     <div className="flex items-center gap-3">
-                      <h3 className="text-xl font-serif font-bold text-slate-900">{previewDoc.title}</h3>
-                      {previewDoc.citation && (
+                      <h3 className="text-xl font-serif font-bold text-slate-900">
+                        {viewingVersion ? `Version ${viewingVersion.version} Preview` : previewDoc?.title}
+                      </h3>
+                      {previewDoc?.citation && !viewingVersion && (
                         <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-1 rounded border border-slate-200">
                           {previewDoc.citation}
                         </span>
                       )}
                     </div>
                     <p className="text-xs text-slate-500 uppercase font-mono tracking-wider">
-                      {previewDoc.type} • {new Date(previewDoc.uploaded_at).toLocaleDateString()}
+                      {viewingVersion ? `Uploaded on ${new Date(viewingVersion.uploaded_at).toLocaleString()}` : `${previewDoc?.type} • ${new Date(previewDoc?.uploaded_at || '').toLocaleDateString()}`}
                     </p>
                   </div>
                 </div>
                 <button 
-                  onClick={() => setPreviewDoc(null)}
+                  onClick={() => {
+                    setPreviewDoc(null);
+                    setViewingVersion(null);
+                    setPreviewContent(null);
+                  }}
                   className="p-2 hover:bg-slate-200 rounded-full transition-colors"
                 >
                   <X size={24} />
@@ -2409,17 +3201,17 @@ const DocumentLibrary = ({
                              <Info size={18} />}
                             Citation Validity Check: {previewDoc.citation_check.status.toUpperCase()}
                           </h4>
-                          {!previewDoc.citation_analysis && (
+                          {(previewDoc.citation_check || previewDoc.citation_analysis) && (
                             <button 
                               onClick={() => handleExportCitationAnalysis(previewDoc)}
                               className={`flex items-center gap-2 px-3 py-1.5 bg-white border rounded-lg text-xs font-bold transition-all shadow-sm ${
-                                previewDoc.citation_check.status === 'valid' ? 'border-green-200 text-green-600 hover:bg-green-600 hover:text-white' :
-                                previewDoc.citation_check.status === 'caution' ? 'border-amber-200 text-amber-600 hover:bg-amber-600 hover:text-white' :
-                                previewDoc.citation_check.status === 'invalid' ? 'border-red-200 text-red-600 hover:bg-red-600 hover:text-white' :
+                                previewDoc.citation_check?.status === 'valid' ? 'border-green-200 text-green-600 hover:bg-green-600 hover:text-white' :
+                                previewDoc.citation_check?.status === 'caution' ? 'border-amber-200 text-amber-600 hover:bg-amber-600 hover:text-white' :
+                                previewDoc.citation_check?.status === 'invalid' ? 'border-red-200 text-red-600 hover:bg-red-600 hover:text-white' :
                                 'border-slate-200 text-slate-600 hover:bg-slate-600 hover:text-white'
                               }`}
                             >
-                              <Download size={14} /> Export Analysis
+                              <Download size={14} /> Export Citation Analysis
                             </button>
                           )}
                         </div>
@@ -2440,12 +3232,7 @@ const DocumentLibrary = ({
                           <h4 className="font-bold text-indigo-900 flex items-center gap-2">
                             <Scale size={18} /> Detailed Citation Analysis
                           </h4>
-                          <button 
-                            onClick={() => handleExportCitationAnalysis(previewDoc)}
-                            className="flex items-center gap-2 px-3 py-1.5 bg-white border border-indigo-200 text-indigo-600 rounded-lg text-xs font-bold hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
-                          >
-                            <Download size={14} /> Export Analysis
-                          </button>
+                          {/* Export button moved to top of citation section */}
                         </div>
                         <p className="text-sm text-indigo-700 leading-relaxed">
                           {previewDoc.citation_analysis}
@@ -2538,6 +3325,35 @@ const DocumentLibrary = ({
                   />
                 </div>
                 <div>
+                  <label className="text-xs font-mono text-slate-400 uppercase">Author</label>
+                  <input 
+                    type="text" 
+                    value={editAuthor}
+                    onChange={(e) => setEditAuthor(e.target.value)}
+                    className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-mono text-slate-400 uppercase">Date Published</label>
+                  <input 
+                    type="date" 
+                    value={editDatePublished}
+                    onChange={(e) => setEditDatePublished(e.target.value)}
+                    className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-mono text-slate-400 uppercase mb-2 block">Keywords</label>
+                  <TagManager 
+                    tags={editKeywords}
+                    onAdd={(keyword) => setEditKeywords([...editKeywords, keyword])}
+                    onRemove={(keyword) => setEditKeywords(editKeywords.filter(k => k !== keyword))}
+                    allTags={[]}
+                    icon={Hash}
+                    placeholder="Add keywords..."
+                  />
+                </div>
+                <div>
                   <label className="text-xs font-mono text-slate-400 uppercase mb-2 block">Document Tags</label>
                   <TagManager 
                     tags={editTags}
@@ -2609,6 +3425,36 @@ const DocumentLibrary = ({
                     onChange={(e) => setBatchEditCitation(e.target.value)}
                     placeholder="Keep current citation"
                     className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-mono text-slate-400 uppercase">New Author</label>
+                  <input 
+                    type="text" 
+                    value={batchEditAuthor}
+                    onChange={(e) => setBatchEditAuthor(e.target.value)}
+                    placeholder="Keep current author"
+                    className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-mono text-slate-400 uppercase">New Date Published</label>
+                  <input 
+                    type="date" 
+                    value={batchEditDatePublished}
+                    onChange={(e) => setBatchEditDatePublished(e.target.value)}
+                    className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-mono text-slate-400 uppercase mb-2 block">New Keywords</label>
+                  <TagManager 
+                    tags={batchEditKeywords}
+                    onAdd={(keyword) => setBatchEditKeywords([...batchEditKeywords, keyword])}
+                    onRemove={(keyword) => setBatchEditKeywords(batchEditKeywords.filter(k => k !== keyword))}
+                    allTags={[]}
+                    icon={Hash}
+                    placeholder="Add keywords to apply to all..."
                   />
                 </div>
                 <div>
@@ -2809,19 +3655,72 @@ const ResearchAssistant = () => {
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       
-      let systemPrompt = "You are LexPH, an Agentic AI Legal Research Assistant for Philippine Law. Tone: Professional, authoritative, precise.";
+      let systemPrompt = "You are LexPH, an advanced Agentic AI Legal Research Assistant specializing in Philippine Law. Your goal is to provide highly accurate, authoritative, and precisely cited legal analysis. Always maintain a professional and objective tone.";
+      
       if (researchMode === 'memo') {
-        systemPrompt += " Automate complex research by analyzing issues, searching jurisprudence, and synthesizing comprehensive legal opinions. Format your response as a formal legal memorandum with sections: To, From, Date, Re, Facts, Issues, Discussion, and Conclusion.";
+        systemPrompt += `
+        ROLE: Senior Legal Consultant.
+        TASK: Automate complex research by analyzing legal issues, searching relevant jurisprudence, and synthesizing comprehensive legal opinions.
+        FORMAT: Formal Legal Memorandum.
+        STRUCTURE:
+        1. TO: [Recipient]
+        2. FROM: LexPH AI Assistant
+        3. DATE: ${new Date().toLocaleDateString()}
+        4. RE: [Subject Matter]
+        5. FACTS: Concise summary of material facts.
+        6. ISSUES: Clearly stated legal questions.
+        7. DISCUSSION/ANALYSIS: Detailed application of law and jurisprudence to the facts.
+        8. CONCLUSION: Definitive legal opinion and recommended course of action.
+        CITATIONS: Use standard Philippine legal citation format (e.g., G.R. No., Date, SCRA).`;
       } else if (researchMode === 'statute') {
-        systemPrompt += " Focus on finding and explaining specific laws, statutes, and articles. Provide the full text of relevant provisions if possible and explain their current status (amended, repealed, etc.). Cite the Official Gazette or relevant Republic Acts.";
+        systemPrompt += `
+        ROLE: Statutory Expert.
+        TASK: Locate and explain specific Philippine laws, Republic Acts, Executive Orders, and Administrative Regulations.
+        INSTRUCTIONS:
+        - Provide the exact title and number of the law.
+        - Quote relevant provisions verbatim where possible.
+        - Explain the current status (e.g., amended by RA XXX, repealed by RA YYY).
+        - Cross-reference with related statutes or implementing rules (IRR).
+        - Cite the Official Gazette or official government sources.`;
       } else if (researchMode === 'case') {
-        systemPrompt += " Focus on finding relevant Supreme Court cases and legal precedents. Provide G.R. Numbers, dates, and detailed summaries of the rulings. Use SCRA or Philippine Reports citations where available.";
+        systemPrompt += `
+        ROLE: Jurisprudence Specialist.
+        TASK: Identify relevant Supreme Court cases and legal precedents.
+        INSTRUCTIONS:
+        - Provide full Case Titles and G.R. Numbers.
+        - Include the date of promulgation.
+        - Summarize the material facts, the specific legal issue, and the Court's definitive ruling (Ratio Decidendi).
+        - Highlight the specific legal doctrine or principle established.
+        - Use SCRA or Philippine Reports citations.`;
       } else if (researchMode === 'article') {
-        systemPrompt += " Focus on retrieving and analyzing legal articles, scholarly journals, and expert commentaries. Provide a synthesis of different legal perspectives on the topic.";
+        systemPrompt += `
+        ROLE: Legal Academic/Scholar.
+        TASK: Retrieve and analyze legal articles, scholarly journals, and expert commentaries.
+        INSTRUCTIONS:
+        - Synthesize different legal perspectives and academic theories on the topic.
+        - Reference reputable legal journals (e.g., Philippine Law Journal, Ateneo Law Journal).
+        - Analyze the evolution of legal thought on the subject.`;
       } else if (researchMode === 'summarizer') {
-        systemPrompt += " You are a Case Summarizer for Philippine Law. Your task is to provide a highly structured and precise summary of the provided case text or citation. You MUST include the following sections: 1. Case Title & Citation (G.R. Number), 2. Facts (concise narrative), 3. Issues (legal questions addressed), 4. Ruling (the court's decision and ratio decidendi), and 5. Legal Analysis (the specific doctrine established and its implications for Philippine jurisprudence). Use professional legal terminology.";
+        systemPrompt += `
+        ROLE: Case Summarizer.
+        TASK: Provide a highly structured and precise summary of a case text or citation.
+        STRUCTURE:
+        1. CASE TITLE & CITATION: Full title and G.R. Number.
+        2. FACTS: A concise narrative of the essential events.
+        3. ISSUES: The core legal questions addressed by the Court.
+        4. RULING: The Court's decision and the underlying legal reasoning.
+        5. DOCTRINE: The specific legal principle or "black letter law" established.
+        6. IMPLICATIONS: Brief analysis of how this affects Philippine jurisprudence.`;
       } else if (researchMode === 'autonomous') {
-        systemPrompt += " You are an Autonomous Legal Research Agent. Your goal is to perform complex, multi-step research tasks with minimal supervision. You should decompose the user's request into logical steps, search for relevant jurisprudence and statutes, analyze the findings, and provide a comprehensive, data-driven report. Focus on enhancing operational efficiency and providing actionable legal intelligence.";
+        systemPrompt += `
+        ROLE: Autonomous Legal Research Agent.
+        TASK: Perform complex, multi-step research tasks with minimal supervision.
+        INSTRUCTIONS:
+        - Decompose the user's request into logical research steps.
+        - Search for relevant jurisprudence, statutes, and administrative issuances.
+        - Analyze findings iteratively to refine the search.
+        - Provide a comprehensive, data-driven report with actionable legal intelligence.
+        - Focus on operational efficiency and strategic depth.`;
       }
 
       const response = await ai.models.generateContent({
@@ -2830,7 +3729,9 @@ const ResearchAssistant = () => {
         config: {
           systemInstruction: systemPrompt,
           tools: [{ googleSearch: {} }],
-          thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH }
+          thinkingConfig: { 
+            thinkingLevel: researchMode === 'autonomous' || researchMode === 'memo' ? ThinkingLevel.HIGH : ThinkingLevel.LOW 
+          }
         }
       });
       
@@ -2844,9 +3745,25 @@ const ResearchAssistant = () => {
           .map(c => ({ title: c.web!.title, uri: c.web!.uri }));
         setSources(extractedSources);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setMessages(prev => [...prev, { role: 'assistant', content: "Error connecting to legal database. Please try again.", id: 'error' }]);
+      let errorMessage = "Error connecting to AI service. Please try again.";
+      
+      if (err.message) {
+        if (err.message.includes("API_KEY_INVALID")) {
+          errorMessage = "Invalid API Key. Please check your GEMINI_API_KEY in the Settings > Secrets menu.";
+        } else if (err.message.includes("QUOTA_EXCEEDED")) {
+          errorMessage = "API Quota exceeded. Please try again later.";
+        } else if (err.message.includes("SAFETY")) {
+          errorMessage = "The request was blocked by safety filters.";
+        } else if (err.message.includes("Forbidden") || err.message.includes("403")) {
+          errorMessage = "Access Forbidden. This may be due to the 'Google Search' tool being restricted for your API key. Please check your API key's permissions or try a different research mode.";
+        } else {
+          errorMessage = `Error: ${err.message}`;
+        }
+      }
+      
+      setMessages(prev => [...prev, { role: 'assistant', content: errorMessage, id: 'error-' + Date.now() }]);
     } finally {
       clearInterval(statusInterval);
       setAgentStatus(null);
@@ -4040,13 +4957,15 @@ const WorkflowCenter = () => {
         const analysisResponse = await ai.models.generateContent({
           model: "gemini-3.1-pro-preview",
           contents: `Analyze the following case facts and identify the key legal issues and applicable laws in the Philippines: ${input}`,
+          config: { thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH } }
         });
         addLog("Facts analyzed and issues identified.", 'success');
         
         addLog("Agent: Searching Philippine jurisprudence for relevant precedents...", 'agent');
         const searchResponse = await ai.models.generateContent({
           model: "gemini-3.1-pro-preview",
-          contents: `Search for Philippine Supreme Court cases relevant to these legal issues: ${analysisResponse.text}`,
+          contents: `Search for Philippine Supreme Court cases relevant to these legal issues: ${analysisResponse.text}. 
+          Provide a list of 3-5 most relevant cases with their citations and brief summaries.`,
           config: { tools: [{ googleSearch: {} }] }
         });
         addLog("Found relevant jurisprudence and precedents.", 'success');
@@ -4054,53 +4973,102 @@ const WorkflowCenter = () => {
         addLog("Agent: Predicting case outcome and assessing risks...", 'agent');
         const predictionResponse = await ai.models.generateContent({
           model: "gemini-3.1-pro-preview",
-          contents: `Based on the facts: ${input}, and the jurisprudence found: ${searchResponse.text}, predict the likely outcome of this case in a Philippine court. Include a win probability and a list of major legal risks.`,
+          contents: `Based on the facts: ${input}, and the jurisprudence found: ${searchResponse.text}, predict the likely outcome of this case in a Philippine court. 
+          Include:
+          - Win probability (percentage)
+          - Major legal risks and vulnerabilities
+          - Strategic recommendations for the client.`,
         });
         addLog("Outcome predicted and risks assessed.", 'success');
 
         addLog("Agent: Synthesizing final legal memorandum...", 'agent');
         const finalResponse = await ai.models.generateContent({
           model: "gemini-3.1-pro-preview",
-          contents: `Draft a formal legal memorandum for a senior partner. 
+          contents: `Draft a formal legal memorandum for a senior partner based on the following analysis.
+          
           Facts: ${input}
+          
           Issues & Analysis: ${analysisResponse.text}
+          
           Jurisprudence: ${searchResponse.text}
+          
           Prediction & Strategy: ${predictionResponse.text}
           
-          The memorandum should be professional, structured, and cite relevant Philippine laws and cases.`,
+          The memorandum should be professional, structured (Heading, Facts, Issues, Discussion/Analysis, Conclusion/Recommendation), and cite relevant Philippine laws and cases.`,
           config: { thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH } }
         });
         
         setResult(finalResponse.text || "Workflow completed with no output.");
       } else if (activeWorkflow === 'compliance-check') {
-        addLog("Agent: Identifying applicable statutes...", 'agent');
-        await new Promise(r => setTimeout(r, 1500));
+        addLog("Agent: Identifying applicable statutes and regulations...", 'agent');
+        const statutesResponse = await ai.models.generateContent({
+          model: "gemini-3.1-pro-preview",
+          contents: `Identify all relevant Philippine statutes, executive orders, and administrative regulations applicable to this scenario: ${input}`,
+          config: { tools: [{ googleSearch: {} }] }
+        });
+        addLog("Applicable laws identified.", 'success');
         
         addLog("Agent: Cross-referencing fact pattern with legal provisions...", 'agent');
         const complianceResponse = await ai.models.generateContent({
           model: "gemini-3.1-pro-preview",
-          contents: `Analyze this scenario for statutory compliance in the Philippines: ${input}`,
-          config: { tools: [{ googleSearch: {} }] }
+          contents: `Analyze the scenario: ${input} for compliance with the following laws: ${statutesResponse.text}. 
+          Identify specific areas of non-compliance and potential penalties.`,
+          config: { thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH } }
         });
-        
-        setResult(complianceResponse.text || "Workflow completed with no output.");
-      } else if (activeWorkflow === 'contract-review') {
-        addLog("Agent: Parsing contract clauses...", 'agent');
-        await new Promise(r => setTimeout(r, 1500));
-        
-        addLog("Agent: Identifying high-risk provisions...", 'agent');
-        const reviewResponse = await ai.models.generateContent({
+        addLog("Compliance analysis completed.", 'success');
+
+        addLog("Agent: Generating compliance report and remediation plan...", 'agent');
+        const finalReport = await ai.models.generateContent({
           model: "gemini-3.1-pro-preview",
-          contents: `Review this contract text for risks and suggest amendments based on Philippine law: ${input}`,
+          contents: `Draft a comprehensive Compliance Report based on the analysis:
+          
+          Scenario: ${input}
+          Applicable Laws: ${statutesResponse.text}
+          Compliance Analysis: ${complianceResponse.text}
+          
+          The report should include a summary of findings, a risk assessment matrix, and a step-by-step remediation plan.`,
         });
         
-        setResult(reviewResponse.text || "Workflow completed with no output.");
+        setResult(finalReport.text || "Workflow completed with no output.");
+      } else if (activeWorkflow === 'contract-review') {
+        addLog("Agent: Parsing contract clauses and identifying key terms...", 'agent');
+        const parsingResponse = await ai.models.generateContent({
+          model: "gemini-3.1-pro-preview",
+          contents: `Parse the following contract text and identify key terms, obligations, and termination clauses: ${input}`,
+        });
+        addLog("Contract parsed.", 'success');
+        
+        addLog("Agent: Identifying high-risk provisions and legal pitfalls...", 'agent');
+        const riskResponse = await ai.models.generateContent({
+          model: "gemini-3.1-pro-preview",
+          contents: `Review the contract terms: ${parsingResponse.text} for high-risk provisions, ambiguities, and potential legal pitfalls under Philippine law.`,
+          config: { thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH } }
+        });
+        addLog("Risks identified.", 'success');
+
+        addLog("Agent: Suggesting amendments and drafting review summary...", 'agent');
+        const reviewSummary = await ai.models.generateContent({
+          model: "gemini-3.1-pro-preview",
+          contents: `Generate a Contract Review Summary based on the analysis:
+          
+          Contract Text: ${input}
+          Key Terms: ${parsingResponse.text}
+          Risk Analysis: ${riskResponse.text}
+          
+          Provide specific suggestions for amendments to mitigate the identified risks and ensure the contract is favorable to the client.`,
+        });
+        
+        setResult(reviewSummary.text || "Workflow completed with no output.");
       }
 
       addLog("Workflow completed successfully.", 'success');
     } catch (err) {
       console.error(err);
-      addLog("An error occurred during the workflow execution.", 'error');
+      const msg = err instanceof Error ? err.message : String(err);
+      addLog("An error occurred during the workflow execution: " + msg, 'error');
+      if (msg.includes("Forbidden") || msg.includes("403")) {
+        addLog("Note: Access Forbidden may be due to 'Google Search' restrictions on your API key. Try a workflow that doesn't require search or check your API key settings.", 'info');
+      }
     } finally {
       setIsRunning(false);
     }
@@ -4139,14 +5107,14 @@ const WorkflowCenter = () => {
             <motion.div 
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="legal-card p-6 bg-slate-900 text-white"
+              className="legal-card p-6"
             >
               <h4 className="text-xs font-mono text-slate-400 uppercase tracking-widest mb-4">Workflow Input</h4>
               <textarea 
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Provide the necessary facts, case text, or contract provisions to begin..."
-                className="w-full h-40 bg-white/5 border border-white/10 rounded-xl p-4 text-sm focus:outline-none focus:border-white/20 resize-none mb-4"
+                className="w-full h-40 bg-white border border-slate-200 rounded-xl p-4 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 resize-none mb-4 shadow-inner"
               />
               <button 
                 onClick={runWorkflow}
@@ -4316,9 +5284,15 @@ const JurisprudenceBrowser = () => {
           }));
         setSources(extractedSources);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError("Error searching for jurisprudence.");
+      let msg = "Error searching for jurisprudence.";
+      if (err.message && (err.message.includes("Forbidden") || err.message.includes("403"))) {
+        msg = "Access Forbidden. This may be due to the 'Google Search' tool being restricted for your API key. Please check your API key's permissions.";
+      } else if (err.message) {
+        msg = `Error: ${err.message}`;
+      }
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -4459,12 +5433,13 @@ const JurisprudenceBrowser = () => {
   );
 };
 
-const KnowledgeBase = () => {
+const KnowledgeBase = ({ showConfirm }: { showConfirm: (title: string, message: string, onConfirm: () => void, type?: 'danger' | 'warning' | 'info') => void }) => {
   const [notes, setNotes] = useState<Note[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [newNote, setNewNote] = useState({ 
@@ -4495,22 +5470,36 @@ const KnowledgeBase = () => {
   }, []);
 
   const handleAddNote = async () => {
-    if (!newNote.title) return;
+    if (!newNote.title.trim()) {
+      alert("Please enter a title for the insight.");
+      return;
+    }
     
-    const url = editingNoteId ? `/api/notes/${editingNoteId}` : '/api/notes';
-    const method = editingNoteId ? 'PATCH' : 'POST';
-    
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newNote)
-    });
-    
-    if (res.ok) {
-      fetchNotes();
-      setNewNote({ title: '', content: '', category: 'General', tags: '', source_doc_id: undefined });
-      setIsAdding(false);
-      setEditingNoteId(null);
+    setIsSaving(true);
+    try {
+      const url = editingNoteId ? `/api/notes/${editingNoteId}` : '/api/notes';
+      const method = editingNoteId ? 'PATCH' : 'POST';
+      
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newNote)
+      });
+      
+      if (res.ok) {
+        await fetchNotes();
+        setNewNote({ title: '', content: '', category: 'General', tags: '', source_doc_id: undefined });
+        setIsAdding(false);
+        setEditingNoteId(null);
+      } else {
+        const errorData = await res.json();
+        alert(`Failed to save insight: ${errorData.error || res.statusText}`);
+      }
+    } catch (err) {
+      console.error("Save note error:", err);
+      alert("An error occurred while saving the insight.");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -4526,11 +5515,25 @@ const KnowledgeBase = () => {
     setIsAdding(true);
   };
 
-  const handleDeleteNote = async (id: number) => {
-    const res = await fetch(`/api/notes/${id}`, { method: 'DELETE' });
-    if (res.ok) {
-      setNotes(notes.filter(n => n.id !== id));
-    }
+  const handleDeleteNote = (id: number) => {
+    showConfirm(
+      "Delete Insight",
+      "Are you sure you want to delete this insight? This action cannot be undone.",
+      async () => {
+        try {
+          const res = await fetch(`/api/notes/${id}`, { method: 'DELETE' });
+          if (res.ok) {
+            setNotes(prev => prev.filter(n => n.id !== id));
+          } else {
+            alert("Failed to delete insight.");
+          }
+        } catch (err) {
+          console.error("Delete note error:", err);
+          alert("An error occurred while deleting the insight.");
+        }
+      },
+      'danger'
+    );
   };
 
   const handleGenerateInsight = async (docId: number) => {
@@ -4764,9 +5767,11 @@ const KnowledgeBase = () => {
                   </button>
                   <button 
                     onClick={handleAddNote}
-                    className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700 transition-all shadow-md"
+                    disabled={isSaving}
+                    className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700 transition-all shadow-md disabled:opacity-50 flex items-center gap-2"
                   >
-                    {editingNoteId ? 'Update Insight' : 'Save Insight'}
+                    {isSaving && <RotateCcw size={16} className="animate-spin" />}
+                    {editingNoteId ? (isSaving ? 'Updating...' : 'Update Insight') : (isSaving ? 'Saving...' : 'Save Insight')}
                   </button>
                 </div>
               </div>
@@ -4801,11 +5806,7 @@ const KnowledgeBase = () => {
                         <Edit2 size={14} />
                       </button>
                       <button 
-                        onClick={() => {
-                          if (confirm("Are you sure you want to delete this insight?")) {
-                            handleDeleteNote(note.id);
-                          }
-                        }}
+                        onClick={() => handleDeleteNote(note.id)}
                         className="text-slate-300 hover:text-red-500"
                         title="Delete Insight"
                       >
@@ -4856,9 +5857,54 @@ const KnowledgeBase = () => {
   );
 };
 
+
 export default function App() {
+  const { profile, loading: authLoading } = useAuth();
   const [activeView, setActiveView] = useState<ViewType>('dashboard');
   const [summarizerInitialData, setSummarizerInitialData] = useState<{text: string, citation?: string} | null>(null);
+
+  const [confirmModal, setConfirmModal] = useState<{
+    show: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type: 'danger' | 'warning' | 'info';
+  }>({
+    show: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    type: 'info'
+  });
+
+  const showConfirm = (title: string, message: string, onConfirm: () => void, type: 'danger' | 'warning' | 'info' = 'warning') => {
+    setConfirmModal({ show: true, title, message, onConfirm, type });
+  };
+
+  useEffect(() => {
+    async function testConnection() {
+      try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+      } catch (error) {
+        if(error instanceof Error && error.message.includes('the client is offline')) {
+          console.error("Please check your Firebase configuration. ");
+        }
+      }
+    }
+    testConnection();
+  }, []);
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-zinc-50">
+        <div className="w-12 h-12 border-4 border-zinc-200 border-t-zinc-900 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return <AuthScreen />;
+  }
 
   const handleSummarizeFromLibrary = (text: string, citation?: string) => {
     setSummarizerInitialData({ text, citation });
@@ -4933,13 +5979,31 @@ export default function App() {
           />
         </nav>
 
-        <div className="pt-6 border-t border-slate-100">
+        <div className="pt-6 border-t border-slate-100 space-y-2">
           <SidebarItem 
             icon={Settings} 
             label="Settings" 
             active={activeView === 'settings'} 
             onClick={() => setActiveView('settings')} 
           />
+          <div className="pt-4 mt-4 border-t border-slate-50">
+            <div className="flex items-center gap-3 px-4 py-3 mb-2">
+              <div className="w-8 h-8 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-bold">
+                {profile.displayName?.charAt(0)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold text-slate-900 truncate">{profile.displayName}</p>
+                <p className="text-[10px] text-slate-500 truncate">{profile.email}</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => signOut(auth)}
+              className="w-full flex items-center gap-3 px-4 py-2 rounded-lg text-red-600 hover:bg-red-50 hover:text-red-700 transition-colors cursor-pointer"
+            >
+              <LogOut size={20} />
+              <span className="font-medium">Sign Out</span>
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -4972,12 +6036,13 @@ export default function App() {
             )}
             {activeView === 'statutes' && <StatuteSearch />}
             {activeView === 'analytics' && <PredictiveAnalytics />}
-            {activeView === 'knowledge' && <KnowledgeBase />}
+            {activeView === 'knowledge' && <KnowledgeBase showConfirm={showConfirm} />}
             {activeView === 'library' && (
               <DocumentLibrary 
                 onSummarize={handleSummarizeFromLibrary} 
                 setSummarizerInitialData={setSummarizerInitialData}
                 setActiveView={setActiveView}
+                showConfirm={showConfirm}
               />
             )}
             {activeView === 'workflows' && <WorkflowCenter />}
@@ -4995,6 +6060,15 @@ export default function App() {
           </motion.div>
         </AnimatePresence>
       </main>
+
+      <ConfirmModal 
+        show={confirmModal.show}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+        type={confirmModal.type}
+      />
     </div>
   );
 }

@@ -24,6 +24,9 @@ export interface LegalDocument {
   title: string;
   type: 'case' | 'statute' | 'memo';
   citation?: string;
+  author?: string;
+  date_published?: string;
+  keywords?: string[];
   summary: string;
   size?: number;
   status?: 'processing' | 'completed' | 'failed';
@@ -52,13 +55,22 @@ export interface JurisprudenceResult {
 
 export type ViewType = 'dashboard' | 'research' | 'knowledge' | 'library' | 'analytics' | 'summarizer' | 'settings' | 'jurisprudence' | 'workflows' | 'statutes';
 
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'model';
+  text: string;
+  timestamp: string;
+}
+
 export interface CaseSummary {
+  type: 'CASE' | 'STATUTE' | 'ADMINISTRATIVE' | 'OTHER';
   title: string;
   citation: string;
   facts: string;
   issues: string;
   ruling: string;
   analysis: string;
+  key_doctrines?: string[];
 }
 
 export interface LegalPrediction {
@@ -84,5 +96,5 @@ export interface SavedSearch {
   citationFilter: 'all' | 'valid' | 'caution' | 'invalid' | 'unchecked';
   summaryFilter: 'all' | 'has-summary' | 'no-summary';
   analysisFilter: 'all' | 'has-analysis' | 'no-analysis';
-  sortBy: 'newest' | 'oldest' | 'size-desc' | 'size-asc' | 'title';
+  sortBy: 'newest' | 'oldest' | 'size-desc' | 'size-asc' | 'title' | 'citation-status';
 }

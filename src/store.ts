@@ -12,10 +12,13 @@ interface DocumentLibraryState {
   sizeFilter: 'all' | 'small' | 'medium' | 'large';
   statusFilter: 'all' | 'completed' | 'processing' | 'failed';
   tagFilter: string;
+  authorFilter: string;
+  datePublishedFilter: string;
+  keywordFilter: string;
   citationFilter: 'all' | 'valid' | 'caution' | 'invalid' | 'unchecked';
   summaryFilter: 'all' | 'has-summary' | 'no-summary';
   analysisFilter: 'all' | 'has-analysis' | 'no-analysis';
-  sortBy: 'newest' | 'oldest' | 'size-desc' | 'size-asc' | 'title';
+  sortBy: 'newest' | 'oldest' | 'size-desc' | 'size-asc' | 'title' | 'citation-status';
   selectedIds: number[];
   savedSearches: SavedSearch[];
 
@@ -29,10 +32,13 @@ interface DocumentLibraryState {
   setSizeFilter: (size: 'all' | 'small' | 'medium' | 'large') => void;
   setStatusFilter: (status: 'all' | 'completed' | 'processing' | 'failed') => void;
   setTagFilter: (tag: string) => void;
+  setAuthorFilter: (author: string) => void;
+  setDatePublishedFilter: (date: string) => void;
+  setKeywordFilter: (keyword: string) => void;
   setCitationFilter: (citation: 'all' | 'valid' | 'caution' | 'invalid' | 'unchecked') => void;
   setSummaryFilter: (filter: 'all' | 'has-summary' | 'no-summary') => void;
   setAnalysisFilter: (filter: 'all' | 'has-analysis' | 'no-analysis') => void;
-  setSortBy: (sortBy: 'newest' | 'oldest' | 'size-desc' | 'size-asc' | 'title') => void;
+  setSortBy: (sortBy: 'newest' | 'oldest' | 'size-desc' | 'size-asc' | 'title' | 'citation-status') => void;
   setSelectedIds: (ids: number[] | ((prev: number[]) => number[])) => void;
   resetFilters: () => void;
   addSavedSearch: (search: SavedSearch) => void;
@@ -52,6 +58,9 @@ export const useDocumentStore = create<DocumentLibraryState>()(
       sizeFilter: 'all',
       statusFilter: 'all',
       tagFilter: 'all',
+      authorFilter: '',
+      datePublishedFilter: '',
+      keywordFilter: '',
       citationFilter: 'all',
       summaryFilter: 'all',
       analysisFilter: 'all',
@@ -68,6 +77,9 @@ export const useDocumentStore = create<DocumentLibraryState>()(
       setSizeFilter: (sizeFilter) => set({ sizeFilter }),
       setStatusFilter: (statusFilter) => set({ statusFilter }),
       setTagFilter: (tagFilter) => set({ tagFilter }),
+      setAuthorFilter: (authorFilter) => set({ authorFilter }),
+      setDatePublishedFilter: (datePublishedFilter) => set({ datePublishedFilter }),
+      setKeywordFilter: (keywordFilter) => set({ keywordFilter }),
       setCitationFilter: (citationFilter) => set({ citationFilter }),
       setSummaryFilter: (summaryFilter) => set({ summaryFilter }),
       setAnalysisFilter: (analysisFilter) => set({ analysisFilter }),
@@ -82,6 +94,9 @@ export const useDocumentStore = create<DocumentLibraryState>()(
         sizeFilter: 'all',
         statusFilter: 'all',
         tagFilter: 'all',
+        authorFilter: '',
+        datePublishedFilter: '',
+        keywordFilter: '',
         citationFilter: 'all',
         summaryFilter: 'all',
         analysisFilter: 'all',
