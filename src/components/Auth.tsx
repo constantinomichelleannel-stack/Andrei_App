@@ -1,8 +1,34 @@
 import React, { useState } from 'react';
-import { auth, googleProvider, signInWithPopup, signOut, db, doc, setDoc, serverTimestamp } from '../firebase';
+import { 
+  auth, 
+  googleProvider, 
+  signInWithPopup, 
+  signOut, 
+  db, 
+  doc, 
+  setDoc, 
+  serverTimestamp,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile
+} from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
-import { LogIn, UserPlus, ShieldCheck, AlertCircle, Scale, Briefcase, Hash, CheckCircle2, Bot } from 'lucide-react';
+import { 
+  LogIn, 
+  UserPlus, 
+  ShieldCheck, 
+  AlertCircle, 
+  Scale, 
+  Briefcase, 
+  Hash, 
+  CheckCircle2, 
+  Bot,
+  Mail,
+  Lock,
+  User as UserIcon,
+  ArrowRight
+} from 'lucide-react';
 
 const PRIVACY_POLICY = `
 LexPH Data Privacy Consent
@@ -20,10 +46,16 @@ You may withdraw your consent at any time by deleting your account.
 
 export const AuthScreen = () => {
   const { user, profile, loading, refreshProfile } = useAuth();
-  const [isSigningUp, setIsSigningUp] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'signup' | 'google'>('login');
   const [error, setError] = useState<string | null>(null);
   
-  // Signup form state
+  // Email/Password state
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
+
+  // Signup form state (Profile completion)
   const [rollNumber, setRollNumber] = useState('');
   const [specialization, setSpecialization] = useState('General Practice');
   const [privacyConsent, setPrivacyConsent] = useState(false);
@@ -31,11 +63,48 @@ export const AuthScreen = () => {
 
   const handleGoogleLogin = async () => {
     setError(null);
+    setIsAuthLoading(true);
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err: any) {
       console.error("Login error:", err);
       setError(err.message || "Failed to sign in with Google.");
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleEmailLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setIsAuthLoading(true);
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (err: any) {
+      console.error("Email login error:", err);
+      setError(err.message || "Failed to sign in with email.");
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleEmailSignup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!displayName.trim()) {
+      setError("Please enter your full name.");
+      return;
+    }
+    setError(null);
+    setIsAuthLoading(true);
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      await updateProfile(userCredential.user, { displayName });
+      // The onAuthStateChanged will trigger and show the profile completion screen
+    } catch (err: any) {
+      console.error("Email signup error:", err);
+      setError(err.message || "Failed to sign up with email.");
+    } finally {
+      setIsAuthLoading(false);
     }
   };
 
@@ -79,7 +148,7 @@ export const AuthScreen = () => {
     );
   }
 
-  // If logged in but no profile, show signup form
+  // If logged in but no profile, show signup form (Profile Completion)
   if (user && !profile) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-zinc-50 p-4">
@@ -205,7 +274,9 @@ export const AuthScreen = () => {
         </div>
 
         <div className="bg-white p-8 rounded-3xl shadow-xl border border-zinc-200">
-          <h2 className="text-xl font-bold text-zinc-900 mb-6 text-center">Lawyer Login</h2>
+          <h2 className="text-xl font-bold text-zinc-900 mb-6 text-center">
+            {authMode === 'signup' ? 'Create Professional Account' : 'Lawyer Login'}
+          </h2>
           
           {error && (
             <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-3 text-red-600 text-sm">
@@ -215,8 +286,114 @@ export const AuthScreen = () => {
           )}
 
           <div className="space-y-4">
+            {authMode === 'login' ? (
+              <form onSubmit={handleEmailLogin} className="space-y-4">
+                <div className="relative">
+                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                  <input 
+                    type="email" 
+                    placeholder="Professional Email" 
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full pl-12 pr-4 py-3 bg-zinc-50 border border-zinc-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all"
+                    required
+                  />
+                </div>
+                <div className="relative">
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                  <input 
+                    type="password" 
+                    placeholder="Password" 
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full pl-12 pr-4 py-3 bg-zinc-50 border border-zinc-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all"
+                    required
+                  />
+                </div>
+                <button 
+                  type="submit"
+                  disabled={isAuthLoading}
+                  className="w-full py-4 bg-zinc-900 text-white rounded-2xl font-bold hover:bg-zinc-800 transition-all flex items-center justify-center gap-2 shadow-lg shadow-zinc-200"
+                >
+                  {isAuthLoading ? <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" /> : <LogIn size={20} />}
+                  Sign In
+                </button>
+                <p className="text-center text-sm text-zinc-500">
+                  Don't have an account? {' '}
+                  <button 
+                    type="button"
+                    onClick={() => setAuthMode('signup')}
+                    className="text-zinc-900 font-bold hover:underline"
+                  >
+                    Sign up
+                  </button>
+                </p>
+              </form>
+            ) : (
+              <form onSubmit={handleEmailSignup} className="space-y-4">
+                <div className="relative">
+                  <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                  <input 
+                    type="text" 
+                    placeholder="Full Name" 
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    className="w-full pl-12 pr-4 py-3 bg-zinc-50 border border-zinc-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all"
+                    required
+                  />
+                </div>
+                <div className="relative">
+                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                  <input 
+                    type="email" 
+                    placeholder="Professional Email" 
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full pl-12 pr-4 py-3 bg-zinc-50 border border-zinc-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all"
+                    required
+                  />
+                </div>
+                <div className="relative">
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                  <input 
+                    type="password" 
+                    placeholder="Password" 
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full pl-12 pr-4 py-3 bg-zinc-50 border border-zinc-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all"
+                    required
+                  />
+                </div>
+                <button 
+                  type="submit"
+                  disabled={isAuthLoading}
+                  className="w-full py-4 bg-zinc-900 text-white rounded-2xl font-bold hover:bg-zinc-800 transition-all flex items-center justify-center gap-2 shadow-lg shadow-zinc-200"
+                >
+                  {isAuthLoading ? <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" /> : <UserPlus size={20} />}
+                  Create Account
+                </button>
+                <p className="text-center text-sm text-zinc-500">
+                  Already have an account? {' '}
+                  <button 
+                    type="button"
+                    onClick={() => setAuthMode('login')}
+                    className="text-zinc-900 font-bold hover:underline"
+                  >
+                    Log in
+                  </button>
+                </p>
+              </form>
+            )}
+
+            <div className="flex items-center gap-4 text-zinc-300 my-4">
+              <div className="flex-1 h-px bg-zinc-100" />
+              <span className="text-[10px] font-mono uppercase tracking-widest">OR</span>
+              <div className="flex-1 h-px bg-zinc-100" />
+            </div>
+
             <button 
               onClick={handleGoogleLogin}
+              disabled={isAuthLoading}
               className="w-full py-4 bg-white border-2 border-zinc-100 rounded-2xl font-bold text-zinc-900 hover:bg-zinc-50 transition-all flex items-center justify-center gap-3 shadow-sm"
             >
               <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />

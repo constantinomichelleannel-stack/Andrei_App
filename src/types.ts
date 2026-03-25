@@ -16,6 +16,12 @@ export interface DocumentVersion {
   size: number;
   uploaded_at: string;
   summary: string;
+  citation_check?: {
+    status: 'valid' | 'caution' | 'invalid' | 'unchecked';
+    analysis: string;
+  };
+  legal_summary?: CaseSummary;
+  citation_analysis?: string;
 }
 
 export interface LegalDocument {
@@ -53,7 +59,16 @@ export interface JurisprudenceResult {
   }[];
 }
 
-export type ViewType = 'dashboard' | 'research' | 'knowledge' | 'library' | 'analytics' | 'summarizer' | 'settings' | 'jurisprudence' | 'workflows' | 'statutes';
+export type ViewType = 'dashboard' | 'research' | 'knowledge' | 'library' | 'analytics' | 'summarizer' | 'settings' | 'jurisprudence' | 'workflows' | 'statutes' | 'admin';
+
+export interface User {
+  uid: string;
+  email: string;
+  display_name: string;
+  role: 'user' | 'admin';
+  last_login: string;
+  created_at: string;
+}
 
 export interface ChatMessage {
   id: string;
@@ -83,6 +98,13 @@ export interface LegalPrediction {
   likelyOutcome: string;
 }
 
+export interface RecentSearch {
+  id: string;
+  query: string;
+  timestamp: string;
+  filters: Partial<SavedSearch>;
+}
+
 export interface SavedSearch {
   id: string;
   name: string;
@@ -92,9 +114,11 @@ export interface SavedSearch {
   endDate: string;
   sizeFilter: 'all' | 'small' | 'medium' | 'large';
   statusFilter: 'all' | 'completed' | 'processing' | 'failed';
-  tagFilter: string;
+  tagFilter: string[];
+  tagFilterLogic?: 'AND' | 'OR';
   citationFilter: 'all' | 'valid' | 'caution' | 'invalid' | 'unchecked';
   summaryFilter: 'all' | 'has-summary' | 'no-summary';
   analysisFilter: 'all' | 'has-analysis' | 'no-analysis';
   sortBy: 'newest' | 'oldest' | 'size-desc' | 'size-asc' | 'title' | 'citation-status';
+  createdAt?: string;
 }

@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Scale,
   Gavel,
+  Shield,
   Briefcase,
   BarChart3,
   TrendingUp,
@@ -63,6 +64,7 @@ import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { useAuth } from './contexts/AuthContext';
 import { AuthScreen } from './components/Auth';
+import { AdminDashboard } from './components/AdminDashboard';
 import { auth, signOut, db } from './firebase';
 import { getDocFromServer, doc } from 'firebase/firestore';
 
@@ -510,6 +512,7 @@ const DocumentLibrary = ({
   setActiveView: (view: ViewType) => void,
   showConfirm: (title: string, message: string, onConfirm: () => void, type?: 'danger' | 'warning' | 'info') => void
 }) => {
+  const { fetchWithAuth, getAuthToken } = useAuth();
   const {
     documents, setDocuments,
     loading, setLoading,
@@ -520,6 +523,7 @@ const DocumentLibrary = ({
     sizeFilter, setSizeFilter,
     statusFilter, setStatusFilter,
     tagFilter, setTagFilter,
+    tagFilterLogic, setTagFilterLogic,
     authorFilter, setAuthorFilter,
     datePublishedFilter, setDatePublishedFilter,
     keywordFilter, setKeywordFilter,
@@ -529,7 +533,8 @@ const DocumentLibrary = ({
     sortBy, setSortBy,
     selectedIds, setSelectedIds,
     resetFilters,
-    savedSearches, addSavedSearch, removeSavedSearch, applySavedSearch
+    savedSearches, addSavedSearch, removeSavedSearch, applySavedSearch,
+    recentSearches, addRecentSearch, clearRecentSearches
   } = useDocumentStore();
 
   const [isUploading, setIsUploading] = useState(false);
@@ -580,12 +585,109 @@ const DocumentLibrary = ({
   const [showSavedSearches, setShowSavedSearches] = useState(false);
   const [newTag, setNewTag] = useState('');
   const [expandedDocId, setExpandedDocId] = useState<number | null>(null);
+  const [tagSearchQuery, setTagSearchQuery] = useState('');
   const [isCopied, setIsCopied] = useState(false);
   const [showStructuredSummaryId, setShowStructuredSummaryId] = useState<number | null>(null);
+  const [generatingInsightId, setGeneratingInsightId] = useState<number | null>(null);
   const [comparingVersion, setComparingVersion] = useState<any | null>(null);
   const [comparisonContent, setComparisonContent] = useState<{ current: string, target: string } | null>(null);
   const [isComparisonLoading, setIsComparisonLoading] = useState(false);
   const [viewingVersion, setViewingVersion] = useState<any | null>(null);
+
+  const handleGenerateInsight = async (docId: number) => {
+    const doc = documents.find(d => d.id === docId);
+    if (!doc) return;
+
+    if (!process.env.GEMINI_API_KEY) {
+      alert("API Key not found. Please add your GEMINI_API_KEY in the Settings > Secrets menu.");
+      return;
+    }
+
+    setGeneratingInsightId(docId);
+    setAiProgress(0);
+    setAiStep('Initializing insight generation...');
+    setProcessingStep('Preparing document for AI analysis...');
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      
+      // Fetch doc content
+      setAiStep('Fetching document content...');
+      setAiProgress(10);
+      const contentRes = await fetchWithAuth(`/api/documents/preview/${doc.filename}`);
+      const contentData = await contentRes.json();
+      
+      setAiStep('Analyzing content with Gemini...');
+      setAiProgress(30);
+      setProcessingStep('AI is generating strategic insights...');
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `Based on the following legal document, generate a strategic "Legal Insight" or "Practice Note". 
+        Focus on how this case/statute impacts private legal practice, potential risks for clients, and strategic opportunities.
+        The insight should be concise, professional, and actionable.
+        
+        Document: ${doc.title}
+        Content: ${contentData.content?.substring(0, 20000) || "No content available."}
+        
+        Return a JSON object with 'title', 'content', and 'suggested_tags' (comma separated).`,
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              content: { type: Type.STRING },
+              suggested_tags: { type: Type.STRING }
+            },
+            required: ['title', 'content', 'suggested_tags']
+          }
+        }
+      });
+
+      if (response.text) {
+        setAiStep('Saving insight to Knowledge Portal...');
+        setAiProgress(80);
+        const data = JSON.parse(response.text);
+        
+        // Save to Knowledge Portal automatically
+        const saveRes = await fetchWithAuth('/api/notes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: data.title,
+            content: data.content,
+            category: 'Practice Note',
+            tags: data.suggested_tags,
+            source_doc_id: docId
+          })
+        });
+
+        if (saveRes.ok) {
+          setAiProgress(100);
+          setAiStep('Insight saved successfully!');
+          setProcessingStep('Strategic insight generated and saved.');
+          alert(`Successfully generated and saved insight: "${data.title}" to the Knowledge Portal.`);
+        } else {
+          const errorData = await saveRes.json();
+          setAiStep('Failed to save insight');
+          alert(`Insight generated but failed to save: ${errorData.error || saveRes.statusText}`);
+        }
+      }
+    } catch (err) {
+      console.error("Generate insight error:", err);
+      setAiStep('Generation failed');
+      alert("An error occurred while generating the legal insight.");
+    } finally {
+      setTimeout(() => {
+        setGeneratingInsightId(null);
+        setAiProgress(0);
+        setAiStep(null);
+        setProcessingStep(null);
+      }, 2000);
+    }
+  };
 
   const handleCopy = async (text: string) => {
     try {
@@ -599,7 +701,7 @@ const DocumentLibrary = ({
 
   const fetchDocuments = async () => {
     try {
-      const res = await fetch('/api/documents');
+      const res = await fetchWithAuth('/api/documents');
       const data = await res.json();
       setDocuments(data);
     } catch (err) {
@@ -612,6 +714,32 @@ const DocumentLibrary = ({
   useEffect(() => {
     fetchDocuments();
   }, []);
+
+  useEffect(() => {
+    if (searchQuery.trim().length > 2) {
+      const timer = setTimeout(() => {
+        addRecentSearch({
+          id: Math.random().toString(36).substring(7),
+          query: searchQuery,
+          timestamp: new Date().toISOString(),
+          filters: {
+            filter,
+            startDate,
+            endDate,
+            sizeFilter,
+            statusFilter,
+            tagFilter,
+            tagFilterLogic,
+            citationFilter,
+            summaryFilter,
+            analysisFilter,
+            sortBy
+          }
+        });
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [searchQuery]);
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -661,7 +789,7 @@ const DocumentLibrary = ({
           setUploadProgress(15);
           try {
             const summaryResponse = await ai.models.generateContent({
-              model: "gemini-3.1-pro-preview",
+              model: "gemini-3-flash-preview",
               contents: [
                 {
                   parts: [
@@ -700,7 +828,7 @@ const DocumentLibrary = ({
         setProcessingStep('Checking legal citations...');
         try {
           const citationResponse = await ai.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-3-flash-preview",
             contents: [
               {
                 parts: [
@@ -794,9 +922,13 @@ Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and '
     }
 
     try {
-      await new Promise((resolve, reject) => {
+      await new Promise(async (resolve, reject) => {
+        const token = await getAuthToken();
         const xhr = new XMLHttpRequest();
         xhr.open('POST', '/api/documents', true);
+        if (token) {
+          xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        }
         
         xhr.upload.onprogress = (event) => {
           if (event.lengthComputable) {
@@ -862,7 +994,7 @@ Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and '
     if (ext && ['txt', 'md', 'csv', 'json', 'html', 'pdf', 'docx'].includes(ext)) {
       setIsPreviewLoading(true);
       try {
-        const res = await fetch(`/api/documents/preview/${doc.filename}`);
+        const res = await fetchWithAuth(`/api/documents/preview/${doc.filename}`);
         const data = await res.json();
         if (data.content) {
           setPreviewContent(data.content);
@@ -898,7 +1030,7 @@ Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and '
       async () => {
         setIsBatchDeleting(true);
         try {
-          const res = await fetch('/api/documents/batch-delete', {
+          const res = await fetchWithAuth('/api/documents/batch-delete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ids: selectedIds }),
@@ -922,7 +1054,7 @@ Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and '
     
     setIsBatchDownloading(true);
     try {
-      const response = await fetch('/api/documents/batch-download', {
+      const response = await fetchWithAuth('/api/documents/batch-download', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -994,6 +1126,8 @@ Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and '
     }
 
     setIsBatchCheckingCitations(true);
+    setAiProgress(0);
+    setAiStep('Initializing batch citation check...');
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
     try {
@@ -1003,17 +1137,20 @@ Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and '
         const doc = documents.find(d => d.id === id);
         if (!doc) continue;
 
-        setProcessingStep(`Checking ${count} of ${selectedIds.length}: ${doc.title}...`);
+        const currentProgress = Math.round(((count - 1) / selectedIds.length) * 100);
+        setAiProgress(currentProgress);
+        setAiStep(`Checking ${count} of ${selectedIds.length}: ${doc.title}...`);
+        setProcessingStep(`Analyzing citations for: ${doc.title}`);
 
         try {
           // 1. Fetch content
-          const res = await fetch(`/api/documents/preview/${doc.filename}`);
+          const res = await fetchWithAuth(`/api/documents/preview/${doc.filename}`);
           const data = await res.json();
           if (!data.content) continue;
 
           // 2. Check Citations with Gemini
           const citationResponse = await ai.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-3-flash-preview",
             contents: [
               {
                 parts: [
@@ -1062,7 +1199,7 @@ Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and '
             const citationCheck = JSON.parse(citationResponse.text);
             
             // 3. Update metadata
-            await fetch(`/api/documents/${id}`, {
+            await fetchWithAuth(`/api/documents/${id}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ citation_check: citationCheck }),
@@ -1070,18 +1207,26 @@ Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and '
             
             // Update local state immediately for better feedback
             fetchDocuments();
+            setAiProgress(Math.round((count / selectedIds.length) * 100));
           }
         } catch (err) {
           console.error(`Citation check failed for document ${id}:`, err);
         }
       }
+      setAiProgress(100);
+      setAiStep('Batch check complete!');
       setSelectedIds([]);
       setProcessingStep(null);
     } catch (err) {
       console.error('Batch citation check error:', err);
+      setAiStep('Batch check failed');
       setProcessingStep(null);
     } finally {
-      setIsBatchCheckingCitations(false);
+      setTimeout(() => {
+        setIsBatchCheckingCitations(false);
+        setAiProgress(0);
+        setAiStep(null);
+      }, 2000);
     }
   };
 
@@ -1093,6 +1238,8 @@ Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and '
     }
 
     setIsBatchSummarizing(true);
+    setAiProgress(0);
+    setAiStep('Initializing batch summarization...');
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
     try {
@@ -1102,17 +1249,20 @@ Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and '
         const doc = documents.find(d => d.id === id);
         if (!doc) continue;
 
-        setProcessingStep(`Summarizing ${count} of ${selectedIds.length}: ${doc.title}...`);
+        const currentProgress = Math.round(((count - 1) / selectedIds.length) * 100);
+        setAiProgress(currentProgress);
+        setAiStep(`Summarizing ${count} of ${selectedIds.length}: ${doc.title}...`);
+        setProcessingStep(`Generating summary for: ${doc.title}`);
 
         try {
           // 1. Fetch content
-          const res = await fetch(`/api/documents/preview/${doc.filename}`);
+          const res = await fetchWithAuth(`/api/documents/preview/${doc.filename}`);
           const data = await res.json();
           if (!data.content) continue;
 
           // 2. Generate Summary with Gemini
           const summaryResponse = await ai.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-3-flash-preview",
             contents: [
               {
                 parts: [
@@ -1176,7 +1326,7 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
             const summaryData = JSON.parse(summaryResponse.text);
             
             // 3. Update metadata
-            await fetch(`/api/documents/${id}`, {
+            await fetchWithAuth(`/api/documents/${id}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ legal_summary: summaryData }),
@@ -1184,18 +1334,26 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
             
             // Update local state immediately for better feedback
             fetchDocuments();
+            setAiProgress(Math.round((count / selectedIds.length) * 100));
           }
         } catch (err) {
           console.error(`Summarization failed for document ${id}:`, err);
         }
       }
+      setAiProgress(100);
+      setAiStep('Batch summarization complete!');
       setSelectedIds([]);
       setProcessingStep(null);
     } catch (err) {
       console.error('Batch summarization error:', err);
+      setAiStep('Batch summarization failed');
       setProcessingStep(null);
     } finally {
-      setIsBatchSummarizing(false);
+      setTimeout(() => {
+        setIsBatchSummarizing(false);
+        setAiProgress(0);
+        setAiStep(null);
+      }, 2000);
     }
   };
 
@@ -1253,24 +1411,169 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
     if (!versionFile) return;
     setIsUploadingVersion(true);
     setUploadProgress(0);
+    setAiProgress(0);
     setFileProgress(0);
-    setFileStep('Preparing version...');
-    setProcessingStep('Uploading new version...');
+    setAiStep('Initializing analysis...');
+    setFileStep('Queued');
+    setProcessingStep('Preparing new version for analysis...');
+
+    let finalSummary = '';
+    let citationCheck = null;
+
+    // Attempt to generate AI summary and check citations if API key is available
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        setProcessingStep('AI Analysis in progress...');
+        setAiStep('Reading file content...');
+        setAiProgress(10);
+        setUploadProgress(5);
+        
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        
+        // Convert file to base64 for Gemini
+        const reader = new FileReader();
+        const fileBase64 = await new Promise<string>((resolve) => {
+          reader.onload = () => {
+            const base64 = (reader.result as string).split(',')[1];
+            resolve(base64);
+          };
+          reader.readAsDataURL(versionFile);
+        });
+
+        setAiProgress(20);
+        setUploadProgress(10);
+        setAiStep('Analyzing version structure...');
+
+        // 1. Generate Summary
+        setAiStep('Generating legal summary...');
+        setAiProgress(30);
+        setUploadProgress(15);
+        try {
+          const summaryResponse = await ai.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: [
+              {
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType: versionFile.type || "application/octet-stream",
+                      data: fileBase64,
+                    },
+                  },
+                  {
+                    text: `You are an expert Philippine Legal Researcher. Provide a concise, one-sentence legal summary of this new version of the document. 
+                    Focus on the main subject matter, the specific legal doctrine or provision involved, and its significance in Philippine law.`,
+                  },
+                ],
+              },
+            ],
+            config: {
+              thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
+            },
+          });
+          finalSummary = summaryResponse.text || "";
+          setAiProgress(60);
+          setUploadProgress(30);
+        } catch (err) {
+          console.error("AI Summarization failed:", err);
+          setAiStep('Summarization failed');
+        }
+
+        // 2. Check Citations
+        setAiStep('Checking legal citations...');
+        try {
+          const citationResponse = await ai.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: [
+              {
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType: versionFile.type || "application/octet-stream",
+                      data: fileBase64,
+                    },
+                  },
+                  {
+                    text: `You are an expert Philippine Legal Researcher. Analyze the legal citations in the provided document.
+1. Identify all primary citations.
+2. Evaluate their current validity in Philippine jurisprudence.
+3. Assign an overall status: 'valid', 'caution', 'invalid'.
+Return a JSON object with 'status' and 'analysis'.`,
+                  },
+                ],
+              },
+            ],
+            config: {
+              thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  status: { type: Type.STRING, enum: ['valid', 'caution', 'invalid'] },
+                  analysis: { type: Type.STRING }
+                },
+                required: ['status', 'analysis']
+              }
+            }
+          });
+          if (citationResponse.text) {
+            citationCheck = JSON.parse(citationResponse.text);
+          }
+          setAiProgress(100);
+          setUploadProgress(50);
+        } catch (err) {
+          console.error("Citation check failed:", err);
+          setAiStep('Citation check failed');
+        }
+        setAiStep('Analysis Complete');
+        setProcessingStep('AI Analysis complete. Starting upload...');
+        setUploadProgress(50);
+
+      } catch (err) {
+        console.error("Gemini processing failed:", err);
+        setAiStep('Analysis Failed');
+        setProcessingStep('AI Analysis failed, proceeding with upload...');
+        setUploadProgress(50);
+      }
+    } else {
+      setAiStep('Skipped');
+      setAiProgress(100);
+      setUploadProgress(50);
+      setProcessingStep('Starting file upload...');
+    }
+
+    setFileStep('Uploading file...');
+    setProcessingStep('Uploading file to server...');
 
     const formData = new FormData();
     formData.append('file', versionFile);
+    if (finalSummary) {
+      formData.append('summary', finalSummary);
+    }
+    if (citationCheck) {
+      formData.append('citation_check', JSON.stringify(citationCheck));
+    }
 
     try {
-      await new Promise((resolve, reject) => {
+      await new Promise(async (resolve, reject) => {
+        const token = await getAuthToken();
         const xhr = new XMLHttpRequest();
         xhr.open('POST', `/api/documents/${docId}/version`, true);
+        if (token) {
+          xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        }
         
         xhr.upload.onprogress = (event) => {
           if (event.lengthComputable) {
             const percentComplete = Math.round((event.loaded / event.total) * 100);
             setFileProgress(percentComplete);
-            setUploadProgress(percentComplete);
-            setFileStep(`Uploading... ${percentComplete}%`);
+            setUploadProgress(50 + (percentComplete / 2));
+            if (percentComplete === 100) {
+              setFileStep('Finalizing...');
+              setProcessingStep('Finalizing version...');
+            } else {
+              setFileStep(`Uploading... ${percentComplete}%`);
+            }
           }
         };
         
@@ -1296,11 +1599,14 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
     } catch (err) {
       console.error(err);
       setProcessingStep('Version upload failed');
+      setFileStep('Error');
     } finally {
       setTimeout(() => {
         setIsUploadingVersion(false);
         setUploadProgress(0);
+        setAiProgress(0);
         setFileProgress(0);
+        setAiStep(null);
         setFileStep(null);
         setProcessingStep(null);
       }, 2000);
@@ -1310,7 +1616,7 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
   const handleRevert = async (docId: number, versionId: number) => {
     if (!confirm('Are you sure you want to revert to this version? The current version will be saved in history.')) return;
     try {
-      const res = await fetch(`/api/documents/${docId}/revert/${versionId}`, {
+      const res = await fetchWithAuth(`/api/documents/${docId}/revert/${versionId}`, {
         method: 'POST',
       });
       if (res.ok) {
@@ -1329,7 +1635,7 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
     setViewingVersion(version);
     setIsPreviewLoading(true);
     try {
-      const res = await fetch(`/api/documents/preview/${filename}`);
+      const res = await fetchWithAuth(`/api/documents/preview/${filename}`);
       const data = await res.json();
       if (data.content) {
         setPreviewContent(data.content);
@@ -1346,8 +1652,8 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
     setComparingVersion(targetVersion);
     try {
       const [currentRes, targetRes] = await Promise.all([
-        fetch(`/api/documents/preview/${currentFilename}`),
-        fetch(`/api/documents/preview/${targetFilename}`)
+        fetchWithAuth(`/api/documents/preview/${currentFilename}`),
+        fetchWithAuth(`/api/documents/preview/${targetFilename}`)
       ]);
       const currentData = await currentRes.json();
       const targetData = await targetRes.json();
@@ -1369,7 +1675,7 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
 
     setIsUpdating(true);
     try {
-      const res = await fetch(`/api/documents/${editingDoc.id}`, {
+      const res = await fetchWithAuth(`/api/documents/${editingDoc.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1409,7 +1715,7 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
         
         if (Object.keys(body).length === 0) return Promise.resolve();
 
-        return fetch(`/api/documents/${id}`, {
+        return fetchWithAuth(`/api/documents/${id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
@@ -1447,7 +1753,7 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
     const newTags = [...currentTags, tag.trim()].join(', ');
     
     try {
-      const res = await fetch(`/api/documents/${docId}`, {
+      const res = await fetchWithAuth(`/api/documents/${docId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tags: newTags }),
@@ -1473,7 +1779,7 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
     const newTags = currentTags.filter(t => t !== tagToRemove).join(', ');
     
     try {
-      const res = await fetch(`/api/documents/${docId}`, {
+      const res = await fetchWithAuth(`/api/documents/${docId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tags: newTags }),
@@ -1503,6 +1809,7 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
       sizeFilter,
       statusFilter,
       tagFilter,
+      tagFilterLogic,
       citationFilter,
       summaryFilter,
       analysisFilter,
@@ -1572,7 +1879,15 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
       const matchesEndDate = !endDate || docDate <= new Date(endDate + 'T23:59:59');
       
       const matchesStatus = statusFilter === 'all' || doc.status === statusFilter;
-      const matchesTag = tagFilter === 'all' || (Array.isArray(doc.tags) && doc.tags.some(t => t.toLowerCase().includes(tagFilter.toLowerCase())));
+      
+      const matchesTag = tagFilter.length === 0 || (
+        Array.isArray(doc.tags) && (
+          tagFilterLogic === 'AND' 
+            ? tagFilter.every(tf => doc.tags!.some(dt => dt.toLowerCase().includes(tf.toLowerCase())))
+            : tagFilter.some(tf => doc.tags!.some(dt => dt.toLowerCase().includes(tf.toLowerCase())))
+        )
+      );
+
       const matchesCitation = citationFilter === 'all' || (doc.citation_check && doc.citation_check.status === citationFilter) || (citationFilter === 'unchecked' && !doc.citation_check);
       
       const matchesSummary = summaryFilter === 'all' || 
@@ -1866,42 +2181,80 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                           className="absolute right-0 mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 overflow-hidden"
                         >
                           <div className="p-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Saved Searches</span>
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Search History</span>
                             <button onClick={() => setShowSavedSearches(false)} className="text-slate-400 hover:text-slate-600">
                               <X size={14} />
                             </button>
                           </div>
-                          <div className="max-h-64 overflow-y-auto">
-                            {savedSearches.length === 0 ? (
-                              <div className="p-6 text-center text-xs text-slate-400 italic">
-                                No saved searches yet.
+                          <div className="max-h-80 overflow-y-auto">
+                            {savedSearches.length > 0 && (
+                              <div className="p-2 bg-slate-50/50 border-b border-slate-100">
+                                <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Pinned & Saved</span>
                               </div>
-                            ) : (
-                              savedSearches.map(search => (
-                                <div 
-                                  key={search.id}
-                                  className="group p-3 border-b border-slate-50 hover:bg-indigo-50/50 transition-colors flex items-center justify-between"
+                            )}
+                            {savedSearches.map(search => (
+                              <div 
+                                key={search.id}
+                                className="group p-3 border-b border-slate-50 hover:bg-indigo-50/50 transition-colors flex items-center justify-between"
+                              >
+                                <button 
+                                  onClick={() => {
+                                    applySavedSearch(search);
+                                    setShowSavedSearches(false);
+                                  }}
+                                  className="flex-1 text-left"
                                 >
+                                  <p className="text-xs font-bold text-slate-900 truncate">{search.name}</p>
+                                  <p className="text-[10px] text-slate-400 truncate">
+                                    {search.query || 'No query'} • {search.filter}
+                                  </p>
+                                </button>
+                                <button 
+                                  onClick={() => removeSavedSearch(search.id)}
+                                  className="p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            ))}
+
+                            {recentSearches.length > 0 && (
+                              <>
+                                <div className="p-2 bg-slate-50/50 border-b border-slate-100 flex justify-between items-center">
+                                  <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Recent Searches</span>
                                   <button 
-                                    onClick={() => {
-                                      applySavedSearch(search);
-                                      setShowSavedSearches(false);
-                                    }}
-                                    className="flex-1 text-left"
+                                    onClick={clearRecentSearches}
+                                    className="text-[9px] text-slate-400 hover:text-red-500 font-bold"
                                   >
-                                    <p className="text-xs font-bold text-slate-900 truncate">{search.name}</p>
-                                    <p className="text-[10px] text-slate-400 truncate">
-                                      {search.query || 'No query'} • {search.filter}
-                                    </p>
-                                  </button>
-                                  <button 
-                                    onClick={() => removeSavedSearch(search.id)}
-                                    className="p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
-                                  >
-                                    <Trash2 size={12} />
+                                    Clear
                                   </button>
                                 </div>
-                              ))
+                                {recentSearches.map(search => (
+                                  <div 
+                                    key={search.id}
+                                    className="group p-3 border-b border-slate-50 hover:bg-slate-50 transition-colors flex items-center justify-between"
+                                  >
+                                    <button 
+                                      onClick={() => {
+                                        applySavedSearch({ ...search.filters, query: search.query });
+                                        setShowSavedSearches(false);
+                                      }}
+                                      className="flex-1 text-left"
+                                    >
+                                      <p className="text-xs font-medium text-slate-700 truncate">{search.query}</p>
+                                      <p className="text-[9px] text-slate-400 truncate">
+                                        {new Date(search.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                      </p>
+                                    </button>
+                                  </div>
+                                ))}
+                              </>
+                            )}
+
+                            {savedSearches.length === 0 && recentSearches.length === 0 && (
+                              <div className="p-6 text-center text-xs text-slate-400 italic">
+                                No saved or recent searches yet.
+                              </div>
                             )}
                           </div>
                         </motion.div>
@@ -1984,22 +2337,46 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                   </select>
                 </div>
 
-                <div className="flex items-center gap-2 relative">
+                <div className="flex flex-wrap items-center gap-2 relative">
                   <Tag size={14} className="text-slate-400" />
-                  <span className="text-[10px] font-mono text-slate-400 uppercase">Tag:</span>
-                  {popularTags.length > 0 && (
-                    <div className="flex items-center gap-1 overflow-x-auto max-w-[200px] no-scrollbar py-1">
-                      {popularTags.map(tag => (
-                        <button
+                  <span className="text-[10px] font-mono text-slate-400 uppercase">Tags:</span>
+                  
+                  {tagFilter.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1">
+                      {tagFilter.map(tag => (
+                        <span 
                           key={tag}
-                          onClick={() => setTagFilter(tag === tagFilter ? 'all' : tag)}
-                          className={`text-[9px] px-2 py-0.5 rounded-full border transition-all whitespace-nowrap ${
-                            tag === tagFilter 
-                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
-                              : 'bg-white text-slate-500 border-slate-200 hover:border-indigo-300 hover:text-indigo-600'
-                          }`}
+                          className="flex items-center gap-1 px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full text-[10px] font-bold"
                         >
                           {tag}
+                          <button 
+                            onClick={() => setTagFilter(tagFilter.filter(t => t !== tag))}
+                            className="hover:text-indigo-900"
+                          >
+                            <X size={10} />
+                          </button>
+                        </span>
+                      ))}
+                      <button 
+                        onClick={() => setTagFilter([])}
+                        className="text-[10px] text-slate-400 hover:text-slate-600 underline ml-1"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+                  )}
+
+                  {popularTags.length > 0 && (
+                    <div className="flex items-center gap-1 overflow-x-auto max-w-[200px] no-scrollbar py-1">
+                      {popularTags
+                        .filter(tag => !tagFilter.includes(tag))
+                        .map(tag => (
+                        <button
+                          key={tag}
+                          onClick={() => setTagFilter([...tagFilter, tag])}
+                          className="text-[9px] px-2 py-0.5 rounded-full border bg-white text-slate-500 border-slate-200 hover:border-indigo-300 hover:text-indigo-600 transition-all whitespace-nowrap"
+                        >
+                          + {tag}
                         </button>
                       ))}
                     </div>
@@ -2007,25 +2384,16 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                   <div className="relative group">
                     <input 
                       type="text"
-                      value={tagFilter === 'all' ? '' : tagFilter}
+                      value={tagSearchQuery}
                       onChange={(e) => {
-                        const val = e.target.value;
-                        setTagFilter(val || 'all');
+                        setTagSearchQuery(e.target.value);
                         setIsTagSuggestionsVisible(true);
                       }}
                       onFocus={() => setIsTagSuggestionsVisible(true)}
                       onBlur={() => setTimeout(() => setIsTagSuggestionsVisible(false), 200)}
-                      placeholder="Filter by tag..."
+                      placeholder="Add tag filter..."
                       className="text-xs font-medium bg-slate-50 border border-slate-100 rounded-lg pl-3 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 w-[150px]"
                     />
-                    {tagFilter !== 'all' && (
-                      <button 
-                        onClick={() => setTagFilter('all')}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                      >
-                        <X size={12} />
-                      </button>
-                    )}
                     <AnimatePresence>
                       {isTagSuggestionsVisible && (
                         <motion.div 
@@ -2039,31 +2407,24 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                           >
                             Suggestions
                           </div>
-                          <div 
-                            className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-500 italic border-b border-slate-50"
-                            onClick={() => {
-                              setTagFilter('all');
-                              setIsTagSuggestionsVisible(false);
-                            }}
-                          >
-                            All Tags
-                          </div>
                           {allTags
-                            .filter(tag => tagFilter === 'all' || tag.toLowerCase().includes(tagFilter.toLowerCase()))
+                            .filter(tag => !tagFilter.includes(tag))
+                            .filter(tag => !tagSearchQuery || tag.toLowerCase().includes(tagSearchQuery.toLowerCase()))
                             .map(tag => (
                               <div 
                                 key={tag}
                                 className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 flex items-center justify-between"
                                 onClick={() => {
-                                  setTagFilter(tag);
+                                  setTagFilter([...tagFilter, tag]);
+                                  setTagSearchQuery('');
                                   setIsTagSuggestionsVisible(false);
                                 }}
                               >
                                 <span>{tag}</span>
-                                {tagFilter.toLowerCase() === tag.toLowerCase() && <Check size={12} className="text-indigo-600" />}
+                                <Plus size={12} className="text-slate-300" />
                               </div>
                             ))}
-                          {allTags.filter(tag => tagFilter === 'all' || tag.toLowerCase().includes(tagFilter.toLowerCase())).length === 0 && (
+                          {allTags.filter(tag => !tagFilter.includes(tag) && (!tagSearchQuery || tag.toLowerCase().includes(tagSearchQuery.toLowerCase()))).length === 0 && (
                             <div className="px-3 py-4 text-center text-xs text-slate-400 italic">
                               No matching tags
                             </div>
@@ -2072,6 +2433,25 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                       )}
                     </AnimatePresence>
                   </div>
+
+                  {tagFilter.length > 1 && (
+                    <div className="flex items-center bg-slate-100 rounded-lg p-0.5 ml-1 border border-slate-200">
+                      <button
+                        onClick={() => setTagFilterLogic('AND')}
+                        className={`px-2 py-1 text-[9px] font-bold rounded-md transition-all ${tagFilterLogic === 'AND' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        title="All selected tags must be present"
+                      >
+                        AND
+                      </button>
+                      <button
+                        onClick={() => setTagFilterLogic('OR')}
+                        className={`px-2 py-1 text-[9px] font-bold rounded-md transition-all ${tagFilterLogic === 'OR' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        title="Any selected tag can be present"
+                      >
+                        OR
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -2171,6 +2551,14 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                 </div>
 
                 <button 
+                  onClick={() => setIsSavingSearch(true)}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1 px-2 py-1 rounded hover:bg-indigo-50 transition-all"
+                  title="Save current search and filters"
+                >
+                  <Bookmark size={12} /> Save Search
+                </button>
+
+                <button 
                   onClick={resetFilters}
                   className="text-xs text-slate-400 hover:text-slate-600 font-medium flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-100 transition-all"
                   title="Reset all filters"
@@ -2207,19 +2595,20 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                   exit={{ opacity: 0, height: 0 }}
                   className="mb-6 overflow-hidden"
                 >
-                  <div className="flex items-center justify-between p-4 bg-indigo-50 border border-indigo-100 rounded-xl">
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm font-bold text-indigo-900">
-                        {selectedIds.length} items selected
-                      </span>
-                      <button 
-                        onClick={() => setSelectedIds([])}
-                        className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
-                      >
-                        Deselect all
-                      </button>
-                    </div>
-                    <div className="flex items-center gap-3">
+                  <div className="flex flex-col gap-4 p-4 bg-indigo-50 border border-indigo-100 rounded-xl">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm font-bold text-indigo-900">
+                          {selectedIds.length} items selected
+                        </span>
+                        <button 
+                          onClick={() => setSelectedIds([])}
+                          className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                        >
+                          Deselect all
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-3">
                       <button 
                         onClick={handleBatchCitationCheck}
                         disabled={isBatchCheckingCitations}
@@ -2231,7 +2620,7 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                             {processingStep || 'Checking...'}
                           </>
                         ) : (
-                          <><ShieldAlert size={16} /> Check Citations</>
+                          <><ShieldAlert size={16} /> Batch Citation Check</>
                         )}
                       </button>
                       <button 
@@ -2282,7 +2671,31 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                         {isBatchDeleting ? 'Deleting...' : <><Trash2 size={16} /> Delete</>}
                       </button>
                     </div>
+
+                    {(isBatchCheckingCitations || isBatchSummarizing) && (
+                      <motion.div 
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="mt-4 p-3 bg-white/50 rounded-lg border border-indigo-200/50"
+                      >
+                        <div className="flex justify-between items-center mb-1.5">
+                          <div className="flex items-center gap-2">
+                            <BrainCircuit size={14} className="text-indigo-600 animate-pulse" />
+                            <span className="text-[10px] font-bold text-indigo-900 uppercase tracking-wider">{aiStep || 'Processing...'}</span>
+                          </div>
+                          <span className="text-[10px] font-mono font-bold text-indigo-600">{aiProgress}%</span>
+                        </div>
+                        <div className="h-1.5 bg-indigo-100 rounded-full overflow-hidden">
+                          <motion.div 
+                            className="h-full bg-indigo-600"
+                            initial={{ width: 0 }}
+                            animate={{ width: `${aiProgress}%` }}
+                          />
+                        </div>
+                      </motion.div>
+                    )}
                   </div>
+                </div>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -2301,7 +2714,7 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                   <div key={doc.id} className="space-y-2">
                     <div 
                       onClick={() => {
-                        if (doc.legal_summary) {
+                        if (doc.legal_summary || doc.summary) {
                           setExpandedDocId(expandedDocId === doc.id ? null : doc.id);
                         }
                       }}
@@ -2309,7 +2722,7 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                         selectedIds.includes(doc.id) 
                           ? 'bg-indigo-50/50 border-indigo-200 shadow-sm' 
                           : 'border-slate-100 hover:bg-slate-50'
-                      } ${doc.legal_summary ? 'cursor-pointer' : ''}`}
+                      } ${(doc.legal_summary || doc.summary) ? 'cursor-pointer' : ''}`}
                     >
                       {/* Citation Status Indicator Bar */}
                       {doc.citation_check && (
@@ -2356,7 +2769,7 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
-                            {doc.legal_summary && (
+                            {(doc.legal_summary || doc.summary) && (
                               <motion.div
                                 animate={{ rotate: expandedDocId === doc.id ? 90 : 0 }}
                                 transition={{ duration: 0.2 }}
@@ -2395,7 +2808,7 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                                   key={idx} 
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setTagFilter(tag.trim());
+                                    if (!tagFilter.includes(tag.trim())) setTagFilter([...tagFilter, tag.trim()]);
                                   }}
                                   className="text-[10px] px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-full font-bold border border-indigo-100 hover:bg-indigo-100 transition-colors flex items-center gap-1"
                                 >
@@ -2507,16 +2920,53 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                                   </>
                                 )}
                               </div>
-                              {doc.summary && (
-                                <p className="text-xs text-slate-400 line-clamp-1 max-w-md italic">
+                              {doc.summary ? (
+                                <p className={`text-xs text-slate-400 italic transition-all duration-300 ${expandedDocId === doc.id ? 'mt-2 mb-2' : 'line-clamp-1 max-w-md'}`}>
                                   {highlightText(doc.summary, searchQuery)}
                                 </p>
+                              ) : doc.legal_summary && (
+                                <p className={`text-xs text-slate-400 italic transition-all duration-300 ${expandedDocId === doc.id ? 'mt-2 mb-2' : 'line-clamp-1 max-w-md'}`}>
+                                  {highlightText(doc.legal_summary.facts, searchQuery)}
+                                </p>
+                              )}
+                              
+                              {generatingInsightId === doc.id && (
+                                <motion.div 
+                                  initial={{ opacity: 0, height: 0 }}
+                                  animate={{ opacity: 1, height: 'auto' }}
+                                  className="mt-2 space-y-1.5 max-w-sm"
+                                >
+                                  <div className="flex justify-between items-center text-[9px] font-bold text-indigo-600 uppercase tracking-wider">
+                                    <span className="flex items-center gap-1">
+                                      <BrainCircuit size={10} className="animate-pulse" />
+                                      {aiStep || 'Generating insight...'}
+                                    </span>
+                                    <span>{aiProgress}%</span>
+                                  </div>
+                                  <div className="h-1 bg-indigo-100 rounded-full overflow-hidden">
+                                    <motion.div 
+                                      className="h-full bg-indigo-600"
+                                      initial={{ width: 0 }}
+                                      animate={{ width: `${aiProgress}%` }}
+                                    />
+                                  </div>
+                                </motion.div>
                               )}
                             </>
                           ) : null}
                         </div>
                       </div>
                       <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                        <button 
+                          onClick={() => handleGenerateInsight(doc.id)}
+                          disabled={generatingInsightId !== null}
+                          className={`p-2 transition-colors ${
+                            generatingInsightId === doc.id ? 'text-indigo-600 animate-pulse' : 'text-slate-400 hover:text-indigo-600'
+                          }`}
+                          title="Generate Legal Insight"
+                        >
+                          {generatingInsightId === doc.id ? <BrainCircuit size={18} className="animate-spin" /> : <BrainCircuit size={18} />}
+                        </button>
                         <button 
                           onClick={() => {
                             setEditingDoc(doc);
@@ -2549,7 +2999,7 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                             if (onSummarize) {
                               // Fetch content if not already available
                               try {
-                                const res = await fetch(`/api/documents/preview/${doc.filename}`);
+                                const res = await fetchWithAuth(`/api/documents/preview/${doc.filename}`);
                                 const data = await res.json();
                                 if (data.content) {
                                   onSummarize(data.content, doc.citation);
@@ -2593,7 +3043,7 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                     </div>
 
                     <AnimatePresence>
-                      {expandedDocId === doc.id && (doc.legal_summary || doc.citation_check || doc.citation_analysis) && (
+                      {expandedDocId === doc.id && (doc.legal_summary || doc.citation_check || doc.citation_analysis || doc.summary) && (
                         <motion.div
                           initial={{ height: 0, opacity: 0 }}
                           animate={{ height: 'auto', opacity: 1 }}
@@ -2601,6 +3051,19 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                           className="overflow-hidden"
                         >
                           <div className="p-5 bg-slate-50 border border-slate-200 rounded-xl ml-12 mr-4 mb-4 shadow-inner">
+                            {/* AI Summary Section if no legal_summary but has summary */}
+                            {!doc.legal_summary && doc.summary && (
+                              <div className="mb-4">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <BrainCircuit size={18} className="text-indigo-600" />
+                                  <h5 className="font-bold text-slate-900 uppercase tracking-wider text-xs">AI Summary</h5>
+                                </div>
+                                <p className="text-sm text-slate-700 italic leading-relaxed">
+                                  {doc.summary}
+                                </p>
+                              </div>
+                            )}
+
                             {/* AI Legal Analysis Section */}
                             {doc.legal_summary && (
                               <div className="mb-6">
@@ -2912,17 +3375,81 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                       </div>
                       
                       {isUploadingVersion && (
-                        <div className="mt-3 space-y-2">
-                          <div className="flex justify-between items-center text-[9px] font-mono uppercase tracking-wider">
-                            <span className="text-slate-500">{fileStep || 'Uploading...'}</span>
-                            <span className="text-indigo-600 font-bold">{fileProgress}%</span>
+                        <div className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-4 shadow-inner">
+                          <div className="flex items-center gap-2 pb-2 border-b border-slate-200">
+                            <div className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600">
+                              <div className="w-3 h-3 border-2 border-indigo-600/20 border-t-indigo-600 rounded-full animate-spin" />
+                            </div>
+                            <div>
+                              <h4 className="text-[10px] font-bold text-slate-900 uppercase tracking-wider">Processing Version</h4>
+                              <p className="text-[9px] text-slate-500 font-mono uppercase tracking-wider">{processingStep || 'Initializing...'}</p>
+                            </div>
                           </div>
-                          <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                            <motion.div 
-                              className="h-full bg-indigo-500"
-                              initial={{ width: 0 }}
-                              animate={{ width: `${fileProgress}%` }}
-                            />
+
+                          <div className="space-y-4">
+                            {/* AI Analysis Stage */}
+                            <div className="space-y-1.5">
+                              <div className="flex justify-between items-center">
+                                <div className="flex items-center gap-2">
+                                  <div className={`w-4 h-4 rounded-full flex items-center justify-center ${aiProgress === 100 ? 'bg-emerald-100 text-emerald-600' : 'bg-indigo-100 text-indigo-600'}`}>
+                                    {aiProgress === 100 ? <Check size={10} /> : <BrainCircuit size={10} />}
+                                  </div>
+                                  <span className="text-[10px] font-bold text-slate-700">AI Analysis</span>
+                                </div>
+                                <span className={`text-[9px] font-mono ${aiProgress === 100 ? 'text-emerald-500' : 'text-indigo-500'}`}>
+                                  {aiProgress}%
+                                </span>
+                              </div>
+                              <div className="pl-6">
+                                <p className="text-[9px] text-slate-400 italic mb-1.5">{aiStep || 'Waiting...'}</p>
+                                <div className="h-1 bg-slate-200 rounded-full overflow-hidden">
+                                  <motion.div 
+                                    className={`h-full transition-all duration-500 ${aiProgress === 100 ? 'bg-emerald-500' : 'bg-indigo-500'}`}
+                                    initial={{ width: 0 }}
+                                    animate={{ width: `${aiProgress}%` }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* File Upload Stage */}
+                            <div className="space-y-1.5">
+                              <div className="flex justify-between items-center">
+                                <div className="flex items-center gap-2">
+                                  <div className={`w-4 h-4 rounded-full flex items-center justify-center ${fileProgress === 100 ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-600'}`}>
+                                    {fileProgress === 100 ? <Check size={10} /> : <Upload size={10} />}
+                                  </div>
+                                  <span className="text-[10px] font-bold text-slate-700">File Upload</span>
+                                </div>
+                                <span className={`text-[9px] font-mono ${fileProgress === 100 ? 'text-emerald-500' : 'text-slate-500'}`}>
+                                  {fileProgress}%
+                                </span>
+                              </div>
+                              <div className="pl-6">
+                                <p className="text-[9px] text-slate-400 italic mb-1.5">{fileStep || 'Queued...'}</p>
+                                <div className="h-1 bg-slate-200 rounded-full overflow-hidden">
+                                  <motion.div 
+                                    className={`h-full transition-all duration-500 ${fileProgress === 100 ? 'bg-emerald-500' : 'bg-slate-400'}`}
+                                    initial={{ width: 0 }}
+                                    animate={{ width: `${fileProgress}%` }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="pt-2 border-t border-slate-200">
+                            <div className="flex justify-between items-center text-[8px] font-bold text-slate-400 uppercase mb-1 tracking-widest">
+                              <span>Total Progress</span>
+                              <span>{Math.round(uploadProgress)}%</span>
+                            </div>
+                            <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden p-0.5">
+                              <motion.div 
+                                className="h-full bg-slate-900 rounded-full"
+                                initial={{ width: 0 }}
+                                animate={{ width: `${uploadProgress}%` }}
+                              />
+                            </div>
                           </div>
                         </div>
                       )}
@@ -3102,8 +3629,8 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
               <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                 <div className="flex items-center gap-4">
                   <div className={`p-2 rounded-lg ${
-                    (previewDoc?.type || 'case') === 'case' ? 'bg-blue-50 text-blue-600' :
-                    (previewDoc?.type || 'case') === 'statute' ? 'bg-emerald-50 text-emerald-600' :
+                    ((viewingVersion ? selectedVersionDoc?.type : previewDoc?.type) || 'case') === 'case' ? 'bg-blue-50 text-blue-600' :
+                    ((viewingVersion ? selectedVersionDoc?.type : previewDoc?.type) || 'case') === 'statute' ? 'bg-emerald-50 text-emerald-600' :
                     'bg-amber-50 text-amber-600'
                   }`}>
                     <FileText size={24} />
@@ -3113,9 +3640,9 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                       <h3 className="text-xl font-serif font-bold text-slate-900">
                         {viewingVersion ? `Version ${viewingVersion.version} Preview` : previewDoc?.title}
                       </h3>
-                      {previewDoc?.citation && !viewingVersion && (
+                      {(viewingVersion ? selectedVersionDoc?.citation : previewDoc?.citation) && !viewingVersion && (
                         <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-1 rounded border border-slate-200">
-                          {previewDoc.citation}
+                          {viewingVersion ? selectedVersionDoc?.citation : previewDoc?.citation}
                         </span>
                       )}
                     </div>
@@ -3160,54 +3687,56 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                       </p>
                     </div>
                     
-                    {previewDoc.summary && (
+                    {(viewingVersion ? viewingVersion.summary : previewDoc?.summary) && (
                       <div>
                         <h4 className="text-xs font-mono text-slate-400 uppercase mb-3 tracking-widest">Document Snippet</h4>
                         <div className="p-6 bg-slate-50 rounded-xl border border-slate-100 italic text-slate-600 leading-relaxed">
-                          "{previewDoc.summary}"
+                          "{viewingVersion ? viewingVersion.summary : previewDoc?.summary}"
                         </div>
                       </div>
                     )}
 
-                    <div className="mb-6">
-                      <h4 className="text-xs font-mono text-slate-400 uppercase mb-3 tracking-widest flex items-center gap-2">
-                        <Tag size={12} /> Document Tags
-                      </h4>
-                      <TagManager 
-                        tags={previewDoc.tags || []}
-                        onAdd={(tag) => handleAddTag(previewDoc.id, tag)}
-                        onRemove={(tag) => handleRemoveTag(previewDoc.id, tag)}
-                        allTags={allTags}
-                      />
-                    </div>
+                    {!viewingVersion && (
+                      <div className="mb-6">
+                        <h4 className="text-xs font-mono text-slate-400 uppercase mb-3 tracking-widest flex items-center gap-2">
+                          <Tag size={12} /> Document Tags
+                        </h4>
+                        <TagManager 
+                          tags={previewDoc?.tags || []}
+                          onAdd={(tag) => handleAddTag(previewDoc?.id!, tag)}
+                          onRemove={(tag) => handleRemoveTag(previewDoc?.id!, tag)}
+                          allTags={allTags}
+                        />
+                      </div>
+                    )}
 
-                    {previewDoc.citation_check && (
+                    {(viewingVersion ? viewingVersion.citation_check : previewDoc?.citation_check) && (
                       <div className={`p-6 rounded-xl border ${
-                        previewDoc.citation_check.status === 'valid' ? 'bg-green-50 border-green-100' :
-                        previewDoc.citation_check.status === 'caution' ? 'bg-amber-50 border-amber-100' :
-                        previewDoc.citation_check.status === 'invalid' ? 'bg-red-50 border-red-100' :
+                        (viewingVersion ? viewingVersion.citation_check.status : previewDoc?.citation_check?.status) === 'valid' ? 'bg-green-50 border-green-100' :
+                        (viewingVersion ? viewingVersion.citation_check.status : previewDoc?.citation_check?.status) === 'caution' ? 'bg-amber-50 border-amber-100' :
+                        (viewingVersion ? viewingVersion.citation_check.status : previewDoc?.citation_check?.status) === 'invalid' ? 'bg-red-50 border-red-100' :
                         'bg-slate-50 border-slate-100'
                       }`}>
                         <div className="flex justify-between items-start mb-2">
                           <h4 className={`font-bold flex items-center gap-2 ${
-                            previewDoc.citation_check.status === 'valid' ? 'text-green-900' :
-                            previewDoc.citation_check.status === 'caution' ? 'text-amber-900' :
-                            previewDoc.citation_check.status === 'invalid' ? 'text-red-900' :
+                            (viewingVersion ? viewingVersion.citation_check.status : previewDoc?.citation_check?.status) === 'valid' ? 'text-green-900' :
+                            (viewingVersion ? viewingVersion.citation_check.status : previewDoc?.citation_check?.status) === 'caution' ? 'text-amber-900' :
+                            (viewingVersion ? viewingVersion.citation_check.status : previewDoc?.citation_check?.status) === 'invalid' ? 'text-red-900' :
                             'text-slate-900'
                           }`}>
-                            {previewDoc.citation_check.status === 'valid' ? <CheckCircle2 size={18} /> : 
-                             previewDoc.citation_check.status === 'caution' ? <ShieldAlert size={18} /> : 
-                             previewDoc.citation_check.status === 'invalid' ? <X size={18} /> :
+                            {(viewingVersion ? viewingVersion.citation_check.status : previewDoc?.citation_check?.status) === 'valid' ? <CheckCircle2 size={18} /> : 
+                             (viewingVersion ? viewingVersion.citation_check.status : previewDoc?.citation_check?.status) === 'caution' ? <ShieldAlert size={18} /> : 
+                             (viewingVersion ? viewingVersion.citation_check.status : previewDoc?.citation_check?.status) === 'invalid' ? <X size={18} /> :
                              <Info size={18} />}
-                            Citation Validity Check: {previewDoc.citation_check.status.toUpperCase()}
+                            Citation Validity Check: {(viewingVersion ? viewingVersion.citation_check.status : previewDoc?.citation_check?.status)?.toUpperCase()}
                           </h4>
-                          {(previewDoc.citation_check || previewDoc.citation_analysis) && (
+                          {!viewingVersion && (previewDoc?.citation_check || previewDoc?.citation_analysis) && (
                             <button 
-                              onClick={() => handleExportCitationAnalysis(previewDoc)}
+                              onClick={() => handleExportCitationAnalysis(previewDoc!)}
                               className={`flex items-center gap-2 px-3 py-1.5 bg-white border rounded-lg text-xs font-bold transition-all shadow-sm ${
-                                previewDoc.citation_check?.status === 'valid' ? 'border-green-200 text-green-600 hover:bg-green-600 hover:text-white' :
-                                previewDoc.citation_check?.status === 'caution' ? 'border-amber-200 text-amber-600 hover:bg-amber-600 hover:text-white' :
-                                previewDoc.citation_check?.status === 'invalid' ? 'border-red-200 text-red-600 hover:bg-red-600 hover:text-white' :
+                                previewDoc?.citation_check?.status === 'valid' ? 'border-green-200 text-green-600 hover:bg-green-600 hover:text-white' :
+                                previewDoc?.citation_check?.status === 'caution' ? 'border-amber-200 text-amber-600 hover:bg-amber-600 hover:text-white' :
+                                previewDoc?.citation_check?.status === 'invalid' ? 'border-red-200 text-red-600 hover:bg-red-600 hover:text-white' :
                                 'border-slate-200 text-slate-600 hover:bg-slate-600 hover:text-white'
                               }`}
                             >
@@ -3216,26 +3745,25 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                           )}
                         </div>
                         <p className={`text-sm ${
-                          previewDoc.citation_check.status === 'valid' ? 'text-green-700' :
-                          previewDoc.citation_check.status === 'caution' ? 'text-amber-700' :
-                          previewDoc.citation_check.status === 'invalid' ? 'text-red-700' :
+                          (viewingVersion ? viewingVersion.citation_check.status : previewDoc?.citation_check?.status) === 'valid' ? 'text-green-700' :
+                          (viewingVersion ? viewingVersion.citation_check.status : previewDoc?.citation_check?.status) === 'caution' ? 'text-amber-700' :
+                          (viewingVersion ? viewingVersion.citation_check.status : previewDoc?.citation_check?.status) === 'invalid' ? 'text-red-700' :
                           'text-slate-700'
                         }`}>
-                          {previewDoc.citation_check.analysis}
+                          {viewingVersion ? viewingVersion.citation_check.analysis : previewDoc?.citation_check?.analysis}
                         </p>
                       </div>
                     )}
 
-                    {previewDoc.citation_analysis && (
+                    {(viewingVersion ? viewingVersion.citation_analysis : previewDoc?.citation_analysis) && (
                       <div className="p-6 bg-indigo-50 rounded-xl border border-indigo-100">
                         <div className="flex justify-between items-center mb-4">
                           <h4 className="font-bold text-indigo-900 flex items-center gap-2">
                             <Scale size={18} /> Detailed Citation Analysis
                           </h4>
-                          {/* Export button moved to top of citation section */}
                         </div>
                         <p className="text-sm text-indigo-700 leading-relaxed">
-                          {previewDoc.citation_analysis}
+                          {viewingVersion ? viewingVersion.citation_analysis : previewDoc?.citation_analysis}
                         </p>
                       </div>
                     )}
@@ -3514,8 +4042,13 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
                   <div className="flex flex-wrap gap-1">
                     {searchQuery && <span className="px-2 py-0.5 bg-white border border-indigo-100 rounded text-[10px] text-indigo-600">Query: {searchQuery}</span>}
                     {filter !== 'all' && <span className="px-2 py-0.5 bg-white border border-indigo-100 rounded text-[10px] text-indigo-600">Type: {filter}</span>}
-                    {tagFilter !== 'all' && <span className="px-2 py-0.5 bg-white border border-indigo-100 rounded text-[10px] text-indigo-600">Tag: {tagFilter}</span>}
+                    {tagFilter.length > 0 && <span className="px-2 py-0.5 bg-white border border-indigo-100 rounded text-[10px] text-indigo-600">Tags ({tagFilterLogic}): {tagFilter.join(', ')}</span>}
                     {citationFilter !== 'all' && <span className="px-2 py-0.5 bg-white border border-indigo-100 rounded text-[10px] text-indigo-600">Citation: {citationFilter}</span>}
+                    {sizeFilter !== 'all' && <span className="px-2 py-0.5 bg-white border border-indigo-100 rounded text-[10px] text-indigo-600">Size: {sizeFilter}</span>}
+                    {statusFilter !== 'all' && <span className="px-2 py-0.5 bg-white border border-indigo-100 rounded text-[10px] text-indigo-600">Status: {statusFilter}</span>}
+                    {summaryFilter !== 'all' && <span className="px-2 py-0.5 bg-white border border-indigo-100 rounded text-[10px] text-indigo-600">Summary: {summaryFilter}</span>}
+                    {analysisFilter !== 'all' && <span className="px-2 py-0.5 bg-white border border-indigo-100 rounded text-[10px] text-indigo-600">Analysis: {analysisFilter}</span>}
+                    {(startDate || endDate) && <span className="px-2 py-0.5 bg-white border border-indigo-100 rounded text-[10px] text-indigo-600">Date: {startDate || 'Any'} - {endDate || 'Any'}</span>}
                   </div>
                 </div>
                 
@@ -3556,6 +4089,7 @@ Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'rulin
 };
 
 const ResearchAssistant = () => {
+  const { fetchWithAuth } = useAuth();
   const [query, setQuery] = useState('');
   const [messages, setMessages] = useState<{role: 'user' | 'assistant', content: string, id: string}[]>([]);
   const [loading, setLoading] = useState(false);
@@ -3724,7 +4258,7 @@ const ResearchAssistant = () => {
       }
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-3-flash-preview",
         contents: activeQuery,
         config: {
           systemInstruction: systemPrompt,
@@ -3806,7 +4340,7 @@ const ResearchAssistant = () => {
       formData.append('type', 'memo');
       formData.append('tags', 'AI Research, Legal Memo');
 
-      const res = await fetch('/api/documents', {
+      const res = await fetchWithAuth('/api/documents', {
         method: 'POST',
         body: formData,
       });
@@ -4126,7 +4660,7 @@ const PredictiveAnalytics = () => {
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-3-flash-preview",
         contents: `As a legal predictive analytics tool for Philippine Law, analyze the following case facts. 
         Identify the key legal issues involved and predict the likely outcome based on current jurisprudence and legal principles. 
         
@@ -4376,7 +4910,7 @@ const StatuteSearch = () => {
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-3-flash-preview",
         contents: `Search for specific Philippine laws, statutes, or regulations related to: ${query}. 
         Return a JSON array of objects, each with: 'title' (e.g., Republic Act No. 9262), 'description' (brief summary), 'year' (enactment year), and 'relevance' (why it matches).`,
         config: {
@@ -4413,7 +4947,7 @@ const StatuteSearch = () => {
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-3-flash-preview",
         contents: `Provide a detailed breakdown of ${lawTitle}. Include its full title, date of effectivity, key provisions, and its current status (active, amended, or repealed). Also provide a brief explanation of its impact on Philippine law.`,
         config: { tools: [{ googleSearch: {} }] }
       });
@@ -4543,6 +5077,7 @@ const CaseSummarizer = ({
   initialCitation?: string,
   onClear?: () => void
 }) => {
+  const { fetchWithAuth } = useAuth();
   const [caseText, setCaseText] = useState(initialText || '');
   const [citationInput, setCitationInput] = useState(initialCitation || '');
   const [summary, setSummary] = useState<CaseSummary | null>(null);
@@ -4613,7 +5148,7 @@ The trial court convicted her of parricide and sentenced her to death. On appeal
       }
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-3-flash-preview",
         contents: prompt,
         config: config
       });
@@ -4644,7 +5179,7 @@ The trial court convicted her of parricide and sentenced her to death. On appeal
     if (!summary) return;
     setLoading(true);
     try {
-      const res = await fetch('/api/documents/save-summary', {
+      const res = await fetchWithAuth('/api/documents/save-summary', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -4955,7 +5490,7 @@ const WorkflowCenter = () => {
       if (activeWorkflow === 'case-analysis') {
         addLog("Agent: Analyzing material facts and identifying legal issues...", 'agent');
         const analysisResponse = await ai.models.generateContent({
-          model: "gemini-3.1-pro-preview",
+          model: "gemini-3-flash-preview",
           contents: `Analyze the following case facts and identify the key legal issues and applicable laws in the Philippines: ${input}`,
           config: { thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH } }
         });
@@ -4963,7 +5498,7 @@ const WorkflowCenter = () => {
         
         addLog("Agent: Searching Philippine jurisprudence for relevant precedents...", 'agent');
         const searchResponse = await ai.models.generateContent({
-          model: "gemini-3.1-pro-preview",
+          model: "gemini-3-flash-preview",
           contents: `Search for Philippine Supreme Court cases relevant to these legal issues: ${analysisResponse.text}. 
           Provide a list of 3-5 most relevant cases with their citations and brief summaries.`,
           config: { tools: [{ googleSearch: {} }] }
@@ -4972,7 +5507,7 @@ const WorkflowCenter = () => {
 
         addLog("Agent: Predicting case outcome and assessing risks...", 'agent');
         const predictionResponse = await ai.models.generateContent({
-          model: "gemini-3.1-pro-preview",
+          model: "gemini-3-flash-preview",
           contents: `Based on the facts: ${input}, and the jurisprudence found: ${searchResponse.text}, predict the likely outcome of this case in a Philippine court. 
           Include:
           - Win probability (percentage)
@@ -4983,7 +5518,7 @@ const WorkflowCenter = () => {
 
         addLog("Agent: Synthesizing final legal memorandum...", 'agent');
         const finalResponse = await ai.models.generateContent({
-          model: "gemini-3.1-pro-preview",
+          model: "gemini-3-flash-preview",
           contents: `Draft a formal legal memorandum for a senior partner based on the following analysis.
           
           Facts: ${input}
@@ -5002,7 +5537,7 @@ const WorkflowCenter = () => {
       } else if (activeWorkflow === 'compliance-check') {
         addLog("Agent: Identifying applicable statutes and regulations...", 'agent');
         const statutesResponse = await ai.models.generateContent({
-          model: "gemini-3.1-pro-preview",
+          model: "gemini-3-flash-preview",
           contents: `Identify all relevant Philippine statutes, executive orders, and administrative regulations applicable to this scenario: ${input}`,
           config: { tools: [{ googleSearch: {} }] }
         });
@@ -5010,7 +5545,7 @@ const WorkflowCenter = () => {
         
         addLog("Agent: Cross-referencing fact pattern with legal provisions...", 'agent');
         const complianceResponse = await ai.models.generateContent({
-          model: "gemini-3.1-pro-preview",
+          model: "gemini-3-flash-preview",
           contents: `Analyze the scenario: ${input} for compliance with the following laws: ${statutesResponse.text}. 
           Identify specific areas of non-compliance and potential penalties.`,
           config: { thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH } }
@@ -5019,7 +5554,7 @@ const WorkflowCenter = () => {
 
         addLog("Agent: Generating compliance report and remediation plan...", 'agent');
         const finalReport = await ai.models.generateContent({
-          model: "gemini-3.1-pro-preview",
+          model: "gemini-3-flash-preview",
           contents: `Draft a comprehensive Compliance Report based on the analysis:
           
           Scenario: ${input}
@@ -5033,14 +5568,14 @@ const WorkflowCenter = () => {
       } else if (activeWorkflow === 'contract-review') {
         addLog("Agent: Parsing contract clauses and identifying key terms...", 'agent');
         const parsingResponse = await ai.models.generateContent({
-          model: "gemini-3.1-pro-preview",
+          model: "gemini-3-flash-preview",
           contents: `Parse the following contract text and identify key terms, obligations, and termination clauses: ${input}`,
         });
         addLog("Contract parsed.", 'success');
         
         addLog("Agent: Identifying high-risk provisions and legal pitfalls...", 'agent');
         const riskResponse = await ai.models.generateContent({
-          model: "gemini-3.1-pro-preview",
+          model: "gemini-3-flash-preview",
           contents: `Review the contract terms: ${parsingResponse.text} for high-risk provisions, ambiguities, and potential legal pitfalls under Philippine law.`,
           config: { thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH } }
         });
@@ -5048,7 +5583,7 @@ const WorkflowCenter = () => {
 
         addLog("Agent: Suggesting amendments and drafting review summary...", 'agent');
         const reviewSummary = await ai.models.generateContent({
-          model: "gemini-3.1-pro-preview",
+          model: "gemini-3-flash-preview",
           contents: `Generate a Contract Review Summary based on the analysis:
           
           Contract Text: ${input}
@@ -5230,7 +5765,7 @@ const JurisprudenceBrowser = () => {
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-3-flash-preview",
         contents: `Search for real-life Philippine Supreme Court cases and legal precedents related to: ${query}. 
         Provide a detailed summary of the most relevant cases. 
         For each case, extract the Case Title, G.R. Number/Citation, Date, a concise Summary, and the Key Ruling.
@@ -5434,6 +5969,7 @@ const JurisprudenceBrowser = () => {
 };
 
 const KnowledgeBase = ({ showConfirm }: { showConfirm: (title: string, message: string, onConfirm: () => void, type?: 'danger' | 'warning' | 'info') => void }) => {
+  const { fetchWithAuth } = useAuth();
   const [notes, setNotes] = useState<Note[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
@@ -5455,7 +5991,7 @@ const KnowledgeBase = ({ showConfirm }: { showConfirm: (title: string, message: 
   const fetchNotes = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/notes');
+      const res = await fetchWithAuth('/api/notes');
       const data = await res.json();
       setNotes(data);
     } catch (err) {
@@ -5480,7 +6016,7 @@ const KnowledgeBase = ({ showConfirm }: { showConfirm: (title: string, message: 
       const url = editingNoteId ? `/api/notes/${editingNoteId}` : '/api/notes';
       const method = editingNoteId ? 'PATCH' : 'POST';
       
-      const res = await fetch(url, {
+      const res = await fetchWithAuth(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newNote)
@@ -5521,7 +6057,7 @@ const KnowledgeBase = ({ showConfirm }: { showConfirm: (title: string, message: 
       "Are you sure you want to delete this insight? This action cannot be undone.",
       async () => {
         try {
-          const res = await fetch(`/api/notes/${id}`, { method: 'DELETE' });
+          const res = await fetchWithAuth(`/api/notes/${id}`, { method: 'DELETE' });
           if (res.ok) {
             setNotes(prev => prev.filter(n => n.id !== id));
           } else {
@@ -5545,11 +6081,11 @@ const KnowledgeBase = ({ showConfirm }: { showConfirm: (title: string, message: 
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       
       // Fetch doc content
-      const contentRes = await fetch(`/api/documents/preview/${doc.filename}`);
+      const contentRes = await fetchWithAuth(`/api/documents/preview/${doc.filename}`);
       const contentData = await contentRes.json();
       
       const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-3-flash-preview",
         contents: `Based on the following legal document, generate a strategic "Legal Insight" or "Practice Note". 
         Focus on how this case/statute impacts private legal practice, potential risks for clients, and strategic opportunities.
         The insight should be concise, professional, and actionable.
@@ -5859,7 +6395,7 @@ const KnowledgeBase = ({ showConfirm }: { showConfirm: (title: string, message: 
 
 
 export default function App() {
-  const { profile, loading: authLoading } = useAuth();
+  const { profile, loading: authLoading, isAdmin } = useAuth();
   const [activeView, setActiveView] = useState<ViewType>('dashboard');
   const [summarizerInitialData, setSummarizerInitialData] = useState<{text: string, citation?: string} | null>(null);
 
@@ -5977,6 +6513,14 @@ export default function App() {
             active={activeView === 'workflows'} 
             onClick={() => setActiveView('workflows')} 
           />
+          {isAdmin && (
+            <SidebarItem 
+              icon={Shield} 
+              label="Admin Console" 
+              active={activeView === 'admin'} 
+              onClick={() => setActiveView('admin')} 
+            />
+          )}
         </nav>
 
         <div className="pt-6 border-t border-slate-100 space-y-2">
@@ -6037,6 +6581,7 @@ export default function App() {
             {activeView === 'statutes' && <StatuteSearch />}
             {activeView === 'analytics' && <PredictiveAnalytics />}
             {activeView === 'knowledge' && <KnowledgeBase showConfirm={showConfirm} />}
+            {activeView === 'admin' && <AdminDashboard />}
             {activeView === 'library' && (
               <DocumentLibrary 
                 onSummarize={handleSummarizeFromLibrary} 

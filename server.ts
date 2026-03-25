@@ -9,11 +9,19 @@ import fs from "fs";
 import mammoth from "mammoth";
 import archiver from "archiver";
 import { createRequire } from 'module';
+import admin from "firebase-admin";
+
 const require = createRequire(import.meta.url);
 const pdf = require('pdf-parse');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Initialize Firebase Admin
+const firebaseConfig = JSON.parse(fs.readFileSync(path.join(__dirname, "firebase-applet-config.json"), "utf8"));
+admin.initializeApp({
+  projectId: firebaseConfig.projectId,
+});
 
 // Ensure uploads directory exists
 const uploadDir = path.join(__dirname, "uploads");
@@ -65,6 +73,15 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
+  CREATE TABLE IF NOT EXISTS users (
+    uid TEXT PRIMARY KEY,
+    email TEXT NOT NULL,
+    display_name TEXT,
+    role TEXT DEFAULT 'user', -- 'user', 'admin'
+    last_login DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
   CREATE TABLE IF NOT EXISTS documents (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     filename TEXT NOT NULL,
@@ -92,6 +109,9 @@ db.exec(`
     version INTEGER NOT NULL,
     size INTEGER,
     summary TEXT,
+    citation_check TEXT,
+    legal_summary TEXT,
+    citation_analysis TEXT,
     uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
   );
@@ -188,6 +208,19 @@ if (!columns.includes('citation_analysis')) {
 if (!columns.includes('version')) {
   db.exec("ALTER TABLE documents ADD COLUMN version INTEGER DEFAULT 1;");
 }
+
+// Check document_versions table columns
+const versionTableInfo = db.prepare("PRAGMA table_info(document_versions)").all() as any[];
+const versionColumns = versionTableInfo.map(col => col.name);
+if (!versionColumns.includes('citation_check')) {
+  db.exec("ALTER TABLE document_versions ADD COLUMN citation_check TEXT;");
+}
+if (!versionColumns.includes('legal_summary')) {
+  db.exec("ALTER TABLE document_versions ADD COLUMN legal_summary TEXT;");
+}
+if (!versionColumns.includes('citation_analysis')) {
+  db.exec("ALTER TABLE document_versions ADD COLUMN citation_analysis TEXT;");
+}
 if (!columns.includes('author')) {
   db.exec("ALTER TABLE documents ADD COLUMN author TEXT;");
 }
@@ -214,6 +247,51 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Authentication Middleware
+  const authenticate = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized: Missing or invalid token" });
+    }
+
+    const idToken = authHeader.split("Bearer ")[1];
+    try {
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      
+      // Sync user to local DB
+      let user = db.prepare("SELECT * FROM users WHERE uid = ?").get(decodedToken.uid) as any;
+      if (!user) {
+        db.prepare("INSERT INTO users (uid, email, display_name, role) VALUES (?, ?, ?, ?)").run(
+          decodedToken.uid,
+          decodedToken.email || "",
+          decodedToken.name || "",
+          decodedToken.email === "constantinomichelleannel@gmail.com" ? "admin" : "user" // Bootstrap first admin
+        );
+        user = db.prepare("SELECT * FROM users WHERE uid = ?").get(decodedToken.uid);
+      } else {
+        db.prepare("UPDATE users SET last_login = CURRENT_TIMESTAMP, display_name = ?, email = ? WHERE uid = ?").run(
+          decodedToken.name || user.display_name,
+          decodedToken.email || user.email,
+          decodedToken.uid
+        );
+      }
+
+      (req as any).user = { ...decodedToken, role: user.role };
+      next();
+    } catch (error) {
+      console.error("Authentication error:", error);
+      res.status(401).json({ error: "Unauthorized: Invalid token" });
+    }
+  };
+
+  const isAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if ((req as any).user && (req as any).user.role === 'admin') {
+      next();
+    } else {
+      res.status(403).json({ error: "Forbidden: Admin access required" });
+    }
+  };
+
   // Health check endpoint
   app.get("/api/health", (req, res) => {
     try {
@@ -230,12 +308,12 @@ async function startServer() {
   });
 
   // API Routes
-  app.get("/api/notes", (req, res) => {
+  app.get("/api/notes", authenticate, (req, res) => {
     const notes = db.prepare("SELECT * FROM notes ORDER BY created_at DESC").all();
     res.json(notes);
   });
 
-  app.post("/api/notes", (req, res) => {
+  app.post("/api/notes", authenticate, (req, res) => {
     const { title, content, category, tags, source_doc_id } = req.body;
     const info = db.prepare("INSERT INTO notes (title, content, category, tags, source_doc_id) VALUES (?, ?, ?, ?, ?)").run(
       title, 
@@ -247,7 +325,7 @@ async function startServer() {
     res.json({ id: info.lastInsertRowid });
   });
 
-  app.patch("/api/notes/:id", (req, res) => {
+  app.patch("/api/notes/:id", authenticate, (req, res) => {
     const { id } = req.params;
     const { title, content, category, tags, source_doc_id } = req.body;
     
@@ -260,22 +338,27 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  app.delete("/api/notes/:id", (req, res) => {
+  app.delete("/api/notes/:id", authenticate, (req, res) => {
     db.prepare("DELETE FROM notes WHERE id = ?").run(req.params.id);
     res.json({ success: true });
   });
 
-  app.get("/api/documents", (req, res) => {
+  app.get("/api/documents", authenticate, (req, res) => {
     try {
       const docs = db.prepare("SELECT * FROM documents ORDER BY uploaded_at DESC").all() as any[];
       const allVersions = db.prepare("SELECT * FROM document_versions ORDER BY version DESC").all() as any[];
       
       const versionsByDocId: Record<number, any[]> = {};
       allVersions.forEach(v => {
+        const formattedVersion = {
+          ...v,
+          citation_check: v.citation_check ? JSON.parse(v.citation_check) : null,
+          legal_summary: v.legal_summary ? JSON.parse(v.legal_summary) : null
+        };
         if (!versionsByDocId[v.document_id]) {
           versionsByDocId[v.document_id] = [];
         }
-        versionsByDocId[v.document_id].push(v);
+        versionsByDocId[v.document_id].push(formattedVersion);
       });
 
       const formattedDocs = docs.map(doc => {
@@ -295,7 +378,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/documents", upload.single("file"), async (req, res) => {
+  app.post("/api/documents", authenticate, upload.single("file"), async (req, res) => {
     const { title, type, tags, citation, summary: providedSummary, citation_check, author, date_published, keywords } = req.body;
     const file = req.file;
 
@@ -357,7 +440,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/documents/save-summary", async (req, res) => {
+  app.post("/api/documents/save-summary", authenticate, async (req, res) => {
     const { title, citation, summary, facts, issues, ruling, analysis, tags } = req.body;
 
     if (!title || !summary) {
@@ -409,9 +492,10 @@ Generated by LexPH AI Case Summarizer
     }
   });
 
-  app.post("/api/documents/:id/version", upload.single("file"), async (req, res) => {
+  app.post("/api/documents/:id/version", authenticate, upload.single("file"), async (req, res) => {
     const { id } = req.params;
     const file = req.file;
+    const { summary: bodySummary, citation_check } = req.body;
 
     if (!file) {
       return res.status(400).json({ error: "No file uploaded" });
@@ -424,46 +508,52 @@ Generated by LexPH AI Case Summarizer
 
     try {
       // 1. Save current state to versions
-      db.prepare("INSERT INTO document_versions (document_id, filename, version, size, summary) VALUES (?, ?, ?, ?, ?)").run(
+      db.prepare("INSERT INTO document_versions (document_id, filename, version, size, summary, citation_check, legal_summary, citation_analysis) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
         doc.id,
         doc.filename,
         doc.version,
         doc.size,
-        doc.summary
+        doc.summary,
+        doc.citation_check,
+        doc.legal_summary,
+        doc.citation_analysis
       );
 
-      // 2. Extract summary for new file
-      let summary = "";
-      const filePath = path.join(uploadDir, file.filename);
-      const ext = path.extname(file.originalname).toLowerCase();
-      if (['.txt', '.md', '.csv', '.json', '.html'].includes(ext)) {
-        const content = fs.readFileSync(filePath, 'utf8');
-        summary = content.substring(0, 200) + (content.length > 200 ? '...' : '');
-      } else if (ext === '.pdf') {
-        try {
-          const dataBuffer = fs.readFileSync(filePath);
-          const data = await pdf(dataBuffer);
-          summary = data.text.substring(0, 200) + (data.text.length > 200 ? '...' : '');
-        } catch (err) {
+      // 2. Extract summary for new file if not provided
+      let summary = bodySummary || "";
+      if (!summary) {
+        const filePath = path.join(uploadDir, file.filename);
+        const ext = path.extname(file.originalname).toLowerCase();
+        if (['.txt', '.md', '.csv', '.json', '.html'].includes(ext)) {
+          const content = fs.readFileSync(filePath, 'utf8');
+          summary = content.substring(0, 200) + (content.length > 200 ? '...' : '');
+        } else if (ext === '.pdf') {
+          try {
+            const dataBuffer = fs.readFileSync(filePath);
+            const data = await pdf(dataBuffer);
+            summary = data.text.substring(0, 200) + (data.text.length > 200 ? '...' : '');
+          } catch (err) {
+            summary = `New version uploaded: ${file.originalname}`;
+          }
+        } else if (ext === '.docx') {
+          try {
+            const dataBuffer = fs.readFileSync(filePath);
+            const result = await mammoth.extractRawText({ buffer: dataBuffer });
+            summary = result.value.substring(0, 200) + (result.value.length > 200 ? '...' : '');
+          } catch (err) {
+            summary = `New version uploaded: ${file.originalname}`;
+          }
+        } else {
           summary = `New version uploaded: ${file.originalname}`;
         }
-      } else if (ext === '.docx') {
-        try {
-          const dataBuffer = fs.readFileSync(filePath);
-          const result = await mammoth.extractRawText({ buffer: dataBuffer });
-          summary = result.value.substring(0, 200) + (result.value.length > 200 ? '...' : '');
-        } catch (err) {
-          summary = `New version uploaded: ${file.originalname}`;
-        }
-      } else {
-        summary = `New version uploaded: ${file.originalname}`;
       }
 
       // 3. Update document with new info
-      db.prepare("UPDATE documents SET filename = ?, size = ?, summary = ?, version = version + 1, uploaded_at = CURRENT_TIMESTAMP WHERE id = ?").run(
+      db.prepare("UPDATE documents SET filename = ?, size = ?, summary = ?, version = version + 1, citation_check = ?, legal_summary = NULL, citation_analysis = NULL, uploaded_at = CURRENT_TIMESTAMP WHERE id = ?").run(
         file.filename,
         file.size,
         summary,
+        citation_check || null,
         id
       );
 
@@ -474,7 +564,7 @@ Generated by LexPH AI Case Summarizer
     }
   });
 
-  app.post("/api/documents/:id/revert/:versionId", async (req, res) => {
+  app.post("/api/documents/:id/revert/:versionId", authenticate, async (req, res) => {
     const { id, versionId } = req.params;
 
     const currentDoc = db.prepare("SELECT * FROM documents WHERE id = ?").get(id) as any;
@@ -486,20 +576,26 @@ Generated by LexPH AI Case Summarizer
 
     try {
       // 1. Save current state to versions
-      db.prepare("INSERT INTO document_versions (document_id, filename, version, size, summary) VALUES (?, ?, ?, ?, ?)").run(
+      db.prepare("INSERT INTO document_versions (document_id, filename, version, size, summary, citation_check, legal_summary, citation_analysis) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
         currentDoc.id,
         currentDoc.filename,
         currentDoc.version,
         currentDoc.size,
-        currentDoc.summary
+        currentDoc.summary,
+        currentDoc.citation_check,
+        currentDoc.legal_summary,
+        currentDoc.citation_analysis
       );
 
       // 2. Update document with version info
-      db.prepare("UPDATE documents SET filename = ?, size = ?, summary = ?, version = ?, uploaded_at = CURRENT_TIMESTAMP WHERE id = ?").run(
+      db.prepare("UPDATE documents SET filename = ?, size = ?, summary = ?, version = ?, citation_check = ?, legal_summary = ?, citation_analysis = ?, uploaded_at = CURRENT_TIMESTAMP WHERE id = ?").run(
         targetVersion.filename,
         targetVersion.size,
         targetVersion.summary,
         targetVersion.version,
+        targetVersion.citation_check,
+        targetVersion.legal_summary,
+        targetVersion.citation_analysis,
         id
       );
 
@@ -513,7 +609,7 @@ Generated by LexPH AI Case Summarizer
     }
   });
 
-  app.patch("/api/documents/:id", (req, res) => {
+  app.patch("/api/documents/:id", authenticate, (req, res) => {
     const { id } = req.params;
     const { citation_check, legal_summary, citation_analysis, title, citation, tags, author, date_published, keywords } = req.body;
 
@@ -567,7 +663,7 @@ Generated by LexPH AI Case Summarizer
     }
   });
 
-  app.get("/api/documents/download/:filename", (req, res) => {
+  app.get("/api/documents/download/:filename", authenticate, (req, res) => {
     const filePath = path.join(uploadDir, req.params.filename);
     if (fs.existsSync(filePath)) {
       res.download(filePath);
@@ -576,7 +672,7 @@ Generated by LexPH AI Case Summarizer
     }
   });
 
-  app.get("/api/documents/preview/:filename", async (req, res) => {
+  app.get("/api/documents/preview/:filename", authenticate, async (req, res) => {
     const filePath = path.join(uploadDir, req.params.filename);
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: "File not found" });
@@ -611,7 +707,7 @@ Generated by LexPH AI Case Summarizer
     }
   });
 
-  app.delete("/api/documents/:id", (req, res) => {
+  app.delete("/api/documents/:id", authenticate, (req, res) => {
     const doc = db.prepare("SELECT filename FROM documents WHERE id = ?").get(req.params.id) as any;
     if (doc) {
       // Delete main file
@@ -634,7 +730,7 @@ Generated by LexPH AI Case Summarizer
     res.json({ success: true });
   });
 
-  app.post("/api/documents/batch-delete", (req, res) => {
+  app.post("/api/documents/batch-delete", authenticate, (req, res) => {
     const { ids } = req.body;
     if (!Array.isArray(ids)) {
       return res.status(400).json({ error: "IDs must be an array" });
@@ -660,7 +756,7 @@ Generated by LexPH AI Case Summarizer
     res.json({ success: true });
   });
 
-  app.post("/api/documents/batch-download", async (req, res) => {
+  app.post("/api/documents/batch-download", authenticate, async (req, res) => {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ error: "IDs must be a non-empty array" });
@@ -702,6 +798,36 @@ Generated by LexPH AI Case Summarizer
     }
 
     await archive.finalize();
+  });
+
+  // Admin Routes
+  app.get("/api/admin/users", authenticate, isAdmin, (req, res) => {
+    const users = db.prepare("SELECT * FROM users ORDER BY created_at DESC").all();
+    res.json(users);
+  });
+
+  app.patch("/api/admin/users/:uid/role", authenticate, isAdmin, (req, res) => {
+    const { uid } = req.params;
+    const { role } = req.body;
+    if (!['user', 'admin'].includes(role)) {
+      return res.status(400).json({ error: "Invalid role" });
+    }
+    db.prepare("UPDATE users SET role = ? WHERE uid = ?").run(role, uid);
+    res.json({ success: true });
+  });
+
+  app.get("/api/admin/stats", authenticate, isAdmin, (req, res) => {
+    const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get() as any;
+    const docCount = db.prepare("SELECT COUNT(*) as count FROM documents").get() as any;
+    const noteCount = db.prepare("SELECT COUNT(*) as count FROM notes").get() as any;
+    const recentUsers = db.prepare("SELECT * FROM users ORDER BY last_login DESC LIMIT 5").all();
+    
+    res.json({
+      users: userCount.count,
+      documents: docCount.count,
+      notes: noteCount.count,
+      recentUsers
+    });
   });
 
   // Vite middleware for development

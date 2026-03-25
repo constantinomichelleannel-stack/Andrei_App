@@ -11,7 +11,7 @@ const getAI = () => {
 export const getLegalAssistant = (prompt: string) => {
   const ai = getAI();
   return ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-3-flash-preview",
     contents: prompt,
     config: {
       systemInstruction: `You are LexPH, an Agentic AI Legal Research Assistant for Philippine Law. 
@@ -31,7 +31,7 @@ export const getLegalAssistant = (prompt: string) => {
 export const predictCaseOutcome = async (facts: string) => {
   const ai = getAI();
   const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-3-flash-preview",
     contents: `As a legal predictive analytics tool for Philippine Law, analyze the following case facts and predict the likely outcome based on current jurisprudence and legal principles. 
     Provide:
     1. Probability of Success (Percentage)
@@ -47,7 +47,7 @@ export const predictCaseOutcome = async (facts: string) => {
 export const analyzeJurisprudenceTrends = async (topic: string) => {
   const ai = getAI();
   const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-3-flash-preview",
     contents: `Analyze the recent trends in Philippine Supreme Court jurisprudence regarding: ${topic}.
     Discuss how the Court's stance has evolved over the last 10 years and what private practitioners should expect in future rulings.`,
   });
@@ -57,7 +57,7 @@ export const analyzeJurisprudenceTrends = async (topic: string) => {
 export const summarizeCase = async (caseText: string) => {
   const ai = getAI();
   const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-3-flash-preview",
     contents: `Please provide a concise legal summary of the following Philippine Supreme Court decision. 
     Include:
     1. Case Title and G.R. Number (if provided)

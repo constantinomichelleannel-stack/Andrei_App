@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { LegalDocument, SavedSearch } from './types';
+import { LegalDocument, SavedSearch, RecentSearch } from './types';
 
 interface DocumentLibraryState {
   documents: LegalDocument[];
@@ -11,7 +11,8 @@ interface DocumentLibraryState {
   endDate: string;
   sizeFilter: 'all' | 'small' | 'medium' | 'large';
   statusFilter: 'all' | 'completed' | 'processing' | 'failed';
-  tagFilter: string;
+  tagFilter: string[];
+  tagFilterLogic: 'AND' | 'OR';
   authorFilter: string;
   datePublishedFilter: string;
   keywordFilter: string;
@@ -21,6 +22,7 @@ interface DocumentLibraryState {
   sortBy: 'newest' | 'oldest' | 'size-desc' | 'size-asc' | 'title' | 'citation-status';
   selectedIds: number[];
   savedSearches: SavedSearch[];
+  recentSearches: RecentSearch[];
 
   // Actions
   setDocuments: (docs: LegalDocument[]) => void;
@@ -31,7 +33,8 @@ interface DocumentLibraryState {
   setEndDate: (date: string) => void;
   setSizeFilter: (size: 'all' | 'small' | 'medium' | 'large') => void;
   setStatusFilter: (status: 'all' | 'completed' | 'processing' | 'failed') => void;
-  setTagFilter: (tag: string) => void;
+  setTagFilter: (tags: string[]) => void;
+  setTagFilterLogic: (logic: 'AND' | 'OR') => void;
   setAuthorFilter: (author: string) => void;
   setDatePublishedFilter: (date: string) => void;
   setKeywordFilter: (keyword: string) => void;
@@ -43,7 +46,9 @@ interface DocumentLibraryState {
   resetFilters: () => void;
   addSavedSearch: (search: SavedSearch) => void;
   removeSavedSearch: (id: string) => void;
-  applySavedSearch: (search: SavedSearch) => void;
+  applySavedSearch: (search: SavedSearch | Partial<SavedSearch>) => void;
+  addRecentSearch: (search: RecentSearch) => void;
+  clearRecentSearches: () => void;
 }
 
 export const useDocumentStore = create<DocumentLibraryState>()(
@@ -57,7 +62,8 @@ export const useDocumentStore = create<DocumentLibraryState>()(
       endDate: '',
       sizeFilter: 'all',
       statusFilter: 'all',
-      tagFilter: 'all',
+      tagFilter: [],
+      tagFilterLogic: 'AND',
       authorFilter: '',
       datePublishedFilter: '',
       keywordFilter: '',
@@ -67,6 +73,7 @@ export const useDocumentStore = create<DocumentLibraryState>()(
       sortBy: 'newest',
       selectedIds: [],
       savedSearches: [],
+      recentSearches: [],
 
       setDocuments: (documents) => set({ documents }),
       setLoading: (loading) => set({ loading }),
@@ -77,6 +84,7 @@ export const useDocumentStore = create<DocumentLibraryState>()(
       setSizeFilter: (sizeFilter) => set({ sizeFilter }),
       setStatusFilter: (statusFilter) => set({ statusFilter }),
       setTagFilter: (tagFilter) => set({ tagFilter }),
+      setTagFilterLogic: (tagFilterLogic) => set({ tagFilterLogic }),
       setAuthorFilter: (authorFilter) => set({ authorFilter }),
       setDatePublishedFilter: (datePublishedFilter) => set({ datePublishedFilter }),
       setKeywordFilter: (keywordFilter) => set({ keywordFilter }),
@@ -93,7 +101,8 @@ export const useDocumentStore = create<DocumentLibraryState>()(
         endDate: '',
         sizeFilter: 'all',
         statusFilter: 'all',
-        tagFilter: 'all',
+        tagFilter: [],
+        tagFilterLogic: 'AND',
         authorFilter: '',
         datePublishedFilter: '',
         keywordFilter: '',
@@ -110,22 +119,33 @@ export const useDocumentStore = create<DocumentLibraryState>()(
         savedSearches: state.savedSearches.filter(s => s.id !== id)
       })),
       applySavedSearch: (search) => set({
-        searchQuery: search.query,
-        filter: search.filter,
-        startDate: search.startDate,
-        endDate: search.endDate,
-        sizeFilter: search.sizeFilter,
-        statusFilter: search.statusFilter,
-        tagFilter: search.tagFilter,
-        citationFilter: search.citationFilter,
+        searchQuery: search.query || '',
+        filter: search.filter || 'all',
+        startDate: search.startDate || '',
+        endDate: search.endDate || '',
+        sizeFilter: search.sizeFilter || 'all',
+        statusFilter: search.statusFilter || 'all',
+        tagFilter: search.tagFilter || [],
+        tagFilterLogic: search.tagFilterLogic || 'AND',
+        citationFilter: search.citationFilter || 'all',
         summaryFilter: search.summaryFilter || 'all',
         analysisFilter: search.analysisFilter || 'all',
-        sortBy: search.sortBy,
+        sortBy: search.sortBy || 'newest',
       }),
+      addRecentSearch: (search) => set((state) => ({
+        recentSearches: [
+          search,
+          ...state.recentSearches.filter(s => s.query !== search.query).slice(0, 9)
+        ]
+      })),
+      clearRecentSearches: () => set({ recentSearches: [] }),
     }),
     {
       name: 'lexph-document-library-storage',
-      partialize: (state) => ({ savedSearches: state.savedSearches }),
+      partialize: (state) => ({ 
+        savedSearches: state.savedSearches,
+        recentSearches: state.recentSearches
+      }),
     }
   )
 );
