@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { auth, db, doc, getDoc, setDoc, onAuthStateChanged, User, serverTimestamp, signOut } from '../firebase';
 
 const SESSION_TIMEOUT = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
@@ -42,20 +42,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchProfile = async (uid: string) => {
+  const fetchProfile = useCallback(async (uid: string) => {
+    if (!uid) {
+      setProfile(null);
+      setLoading(false);
+      return;
+    }
+
     try {
+      // First try Firestore as backup/initial source
       const docRef = doc(db, 'users', uid);
       const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        setProfile(docSnap.data() as UserProfile);
+      
+      // Then try our API which syncs with local DB
+      const response = await fetch('/api/profile', {
+        headers: {
+          'Authorization': `Bearer ${await auth.currentUser?.getIdToken()}`
+        }
+      });
+
+      if (response.ok) {
+        const apiData = await response.json();
+        setProfile(apiData);
+      } else if (docSnap.exists()) {
+        const firestoreData = docSnap.data() as UserProfile;
+        setProfile(firestoreData);
       } else {
         setProfile(null);
       }
     } catch (error) {
       console.error("Error fetching profile:", error);
       setProfile(null);
+    } finally {
+      setLoading(false);
     }
-  };
+  }, []);
+
+  const refreshProfile = useCallback(async () => {
+    if (user) {
+      await fetchProfile(user.uid);
+    }
+  }, [user, fetchProfile]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -85,8 +112,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } else {
         setProfile(null);
         localStorage.removeItem('lexph_login_timestamp');
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     // Periodic check for session timeout
@@ -110,22 +137,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const isAdmin = profile?.role === 'admin' || user?.email === "constantinomichelleannel@gmail.com";
 
-  const getAuthToken = async () => {
+  const getAuthToken = useCallback(async () => {
     if (!auth.currentUser) return null;
     return await auth.currentUser.getIdToken(true);
-  };
+  }, []);
 
-  const fetchWithAuth = async (url: string, options: RequestInit = {}) => {
+  const fetchWithAuth = useCallback(async (url: string, options: RequestInit = {}) => {
     const token = await getAuthToken();
     const headers = {
       ...options.headers,
       ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
     };
     return fetch(url, { ...options, headers });
-  };
+  }, [getAuthToken]);
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, isAdmin, refreshProfile: () => fetchProfile(user?.uid || ''), getAuthToken, fetchWithAuth }}>
+    <AuthContext.Provider value={{ user, profile, loading, isAdmin, refreshProfile, getAuthToken, fetchWithAuth }}>
       {children}
     </AuthContext.Provider>
   );

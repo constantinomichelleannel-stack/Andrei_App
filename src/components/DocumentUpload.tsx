@@ -1,5 +1,5 @@
 import React from 'react';
-import { Upload, FileText, BrainCircuit, Check, X } from 'lucide-react';
+import { Upload, FileText, BrainCircuit, Check, X, Shield } from 'lucide-react';
 import { motion } from 'motion/react';
 import { TagManager } from './TagManager';
 
@@ -24,6 +24,8 @@ interface DocumentUploadProps {
   setFile: (file: File | null) => void;
   allTags: string[];
   isUploading: boolean;
+  isPublic: boolean;
+  setIsPublic: (val: boolean) => void;
   uploadProgress: number;
   aiProgress: number;
   fileProgress: number;
@@ -45,6 +47,8 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
   file, setFile,
   allTags,
   isUploading,
+  isPublic,
+  setIsPublic,
   uploadProgress,
   aiProgress,
   fileProgress,
@@ -139,6 +143,23 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
             placeholder="Enter a brief summary or leave blank for AI generation..."
             className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900 h-20 resize-none"
           />
+        </div>
+
+        <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200">
+          <div className="flex items-center gap-2">
+            <Shield size={16} className="text-slate-400" />
+            <div className="text-left">
+              <p className="text-[10px] font-bold text-slate-900 uppercase tracking-wider">Visibility</p>
+              <p className="text-[9px] text-slate-500">Make this document public to all LexPH users.</p>
+            </div>
+          </div>
+          <button 
+            type="button"
+            onClick={() => setIsPublic(!isPublic)}
+            className={`w-10 h-5 rounded-full transition-colors relative ${isPublic ? 'bg-indigo-600' : 'bg-slate-300'}`}
+          >
+            <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform ${isPublic ? 'left-5.5' : 'left-0.5'}`} />
+          </button>
         </div>
         
         <div className="border-2 border-dashed border-slate-200 rounded-xl p-6 text-center hover:border-slate-900 transition-colors cursor-pointer relative">

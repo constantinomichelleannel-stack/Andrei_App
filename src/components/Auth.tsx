@@ -13,6 +13,7 @@ import {
   updateProfile
 } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { PRIVACY_POLICY } from '../constants';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   LogIn, 
@@ -27,25 +28,12 @@ import {
   Mail,
   Lock,
   User as UserIcon,
-  ArrowRight
+  ArrowRight,
+  X
 } from 'lucide-react';
 
-const PRIVACY_POLICY = `
-LexPH Data Privacy Consent
-
-By signing up for LexPH, you agree to the following:
-
-1. Data Collection: We collect your name, email, Supreme Court Roll of Attorneys number, and legal specialization.
-2. Purpose: This data is used to verify your status as a legal professional and to personalize your research experience.
-3. Security: Your data is stored securely using industry-standard encryption.
-4. Professional Responsibility: You acknowledge that LexPH is an AI-assisted research tool and does not constitute legal advice. You remain responsible for verifying all citations and legal conclusions.
-5. Third-Party Services: We use Google for authentication and Gemini AI for research assistance.
-
-You may withdraw your consent at any time by deleting your account.
-`;
-
 export const AuthScreen = () => {
-  const { user, profile, loading, refreshProfile } = useAuth();
+  const { user, profile, loading, refreshProfile, fetchWithAuth } = useAuth();
   const [authMode, setAuthMode] = useState<'login' | 'signup' | 'google'>('login');
   const [error, setError] = useState<string | null>(null);
   
@@ -131,6 +119,19 @@ export const AuthScreen = () => {
         consentDate: serverTimestamp(),
         createdAt: serverTimestamp()
       });
+
+      // Also sync to local DB via API
+      await fetchWithAuth('/api/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rollNumber,
+          specialization,
+          privacyConsent: true,
+          displayName: user.displayName
+        })
+      });
+
       await refreshProfile();
     } catch (err: any) {
       console.error("Signup error:", err);
@@ -140,6 +141,8 @@ export const AuthScreen = () => {
     }
   };
 
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+  
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-zinc-50">
@@ -274,6 +277,16 @@ export const AuthScreen = () => {
         </div>
 
         <div className="bg-white p-8 rounded-3xl shadow-xl border border-zinc-200">
+          <div className="mb-6 p-4 bg-indigo-50/50 border border-indigo-100 rounded-2xl flex items-start gap-3">
+            <ShieldCheck size={18} className="text-indigo-600 mt-0.5" />
+            <div className="text-left">
+              <p className="text-xs font-bold text-indigo-900">Privacy Notice</p>
+              <p className="text-[10px] text-indigo-700 leading-relaxed">
+                LexPH is designed for legal professionals. Your research data is encrypted and used solely for your professional assistance.
+              </p>
+            </div>
+          </div>
+          
           <h2 className="text-xl font-bold text-zinc-900 mb-6 text-center">
             {authMode === 'signup' ? 'Create Professional Account' : 'Lawyer Login'}
           </h2>
@@ -432,8 +445,53 @@ export const AuthScreen = () => {
         </div>
 
         <p className="mt-8 text-center text-xs text-zinc-400">
-          By logging in, you agree to our Terms of Service and Professional Conduct Guidelines.
+          By logging in, you agree to our <button className="underline hover:text-zinc-600 transition-colors">Terms of Service</button>, <button className="underline hover:text-zinc-600 transition-colors">Professional Conduct Guidelines</button>, and <button onClick={() => setShowPrivacyModal(true)} className="underline hover:text-zinc-600 transition-colors">Data Privacy Consent</button>.
         </p>
+        <div className="mt-4 flex justify-center gap-4 text-[10px] font-mono text-zinc-300 uppercase tracking-widest">
+          <span className="flex items-center gap-1"><ShieldCheck size={10} /> Privacy First</span>
+          <span className="flex items-center gap-1"><Lock size={10} /> End-to-End Encryption</span>
+        </div>
+
+        <AnimatePresence>
+          {showPrivacyModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border border-zinc-200"
+              >
+                <div className="p-6 bg-zinc-900 text-white flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <ShieldCheck size={24} className="text-zinc-400" />
+                    <h2 className="text-xl font-serif font-bold">Data Privacy Consent</h2>
+                  </div>
+                  <button 
+                    onClick={() => setShowPrivacyModal(false)}
+                    className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+                <div className="p-8 max-h-[60vh] overflow-y-auto">
+                  <div className="prose prose-sm prose-zinc">
+                    <div className="whitespace-pre-wrap font-sans text-sm text-zinc-600 leading-relaxed">
+                      {PRIVACY_POLICY}
+                    </div>
+                  </div>
+                </div>
+                <div className="p-6 bg-zinc-50 border-t border-zinc-100 flex justify-end">
+                  <button 
+                    onClick={() => setShowPrivacyModal(false)}
+                    className="px-6 py-2 bg-zinc-900 text-white rounded-xl font-bold hover:bg-zinc-800 transition-all"
+                  >
+                    Close
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </motion.div>
     </div>
   );

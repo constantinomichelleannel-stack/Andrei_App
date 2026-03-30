@@ -70,6 +70,7 @@ db.exec(`
     category TEXT,
     tags TEXT,
     source_doc_id INTEGER,
+    uid TEXT, -- Owner UID
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -78,10 +79,29 @@ db.exec(`
     email TEXT NOT NULL,
     display_name TEXT,
     role TEXT DEFAULT 'user', -- 'user', 'admin'
+    roll_number TEXT,
+    specialization TEXT,
+    privacy_consent INTEGER DEFAULT 0,
     last_login DATETIME DEFAULT CURRENT_TIMESTAMP,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+`);
 
+// Migration for existing users table
+try {
+  db.prepare("ALTER TABLE notes ADD COLUMN uid TEXT").run();
+} catch (e) {}
+try {
+  db.prepare("ALTER TABLE users ADD COLUMN roll_number TEXT").run();
+} catch (e) {}
+try {
+  db.prepare("ALTER TABLE users ADD COLUMN specialization TEXT").run();
+} catch (e) {}
+try {
+  db.prepare("ALTER TABLE users ADD COLUMN privacy_consent INTEGER DEFAULT 0").run();
+} catch (e) {}
+
+db.exec(`
   CREATE TABLE IF NOT EXISTS documents (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     filename TEXT NOT NULL,
@@ -269,11 +289,14 @@ async function startServer() {
       // Sync user to local DB
       let user = db.prepare("SELECT * FROM users WHERE uid = ?").get(decodedToken.uid) as any;
       if (!user) {
-        db.prepare("INSERT INTO users (uid, email, display_name, role) VALUES (?, ?, ?, ?)").run(
+        db.prepare("INSERT INTO users (uid, email, display_name, role, roll_number, specialization, privacy_consent) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
           decodedToken.uid,
           decodedToken.email || "",
           decodedToken.name || "",
-          decodedToken.email === "constantinomichelleannel@gmail.com" ? "admin" : "user" // Bootstrap first admin
+          decodedToken.email === "constantinomichelleannel@gmail.com" ? "admin" : "user", // Bootstrap first admin
+          "",
+          "",
+          0
         );
         user = db.prepare("SELECT * FROM users WHERE uid = ?").get(decodedToken.uid);
       } else {
@@ -316,27 +339,32 @@ async function startServer() {
   });
 
   // API Routes
-  app.get("/api/notes", authenticate, (req, res) => {
-    const notes = db.prepare("SELECT * FROM notes ORDER BY created_at DESC").all();
+  app.get("/api/notes", authenticate, (req: any, res) => {
+    const notes = db.prepare("SELECT * FROM notes WHERE uid = ? ORDER BY created_at DESC").all(req.user.uid);
     res.json(notes);
   });
 
-  app.post("/api/notes", authenticate, (req, res) => {
+  app.post("/api/notes", authenticate, (req: any, res) => {
     const { title, content, category, tags, source_doc_id } = req.body;
-    const info = db.prepare("INSERT INTO notes (title, content, category, tags, source_doc_id) VALUES (?, ?, ?, ?, ?)").run(
+    const info = db.prepare("INSERT INTO notes (title, content, category, tags, source_doc_id, uid) VALUES (?, ?, ?, ?, ?, ?)").run(
       title, 
       content, 
       category, 
       tags || null, 
-      source_doc_id || null
+      source_doc_id || null,
+      req.user.uid
     );
     res.json({ id: info.lastInsertRowid });
   });
 
-  app.patch("/api/notes/:id", authenticate, (req, res) => {
+  app.patch("/api/notes/:id", authenticate, (req: any, res) => {
     const { id } = req.params;
     const { title, content, category, tags, source_doc_id } = req.body;
     
+    // Ensure user owns the note
+    const note = db.prepare("SELECT * FROM notes WHERE id = ? AND uid = ?").get(id, req.user.uid);
+    if (!note) return res.status(404).json({ error: "Note not found or unauthorized" });
+
     if (title !== undefined) db.prepare("UPDATE notes SET title = ? WHERE id = ?").run(title, id);
     if (content !== undefined) db.prepare("UPDATE notes SET content = ? WHERE id = ?").run(content, id);
     if (category !== undefined) db.prepare("UPDATE notes SET category = ? WHERE id = ?").run(category, id);
@@ -346,9 +374,76 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  app.delete("/api/notes/:id", authenticate, (req, res) => {
-    db.prepare("DELETE FROM notes WHERE id = ?").run(req.params.id);
+  app.delete("/api/notes/:id", authenticate, (req: any, res) => {
+    const { id } = req.params;
+    const info = db.prepare("DELETE FROM notes WHERE id = ? AND uid = ?").run(id, req.user.uid);
+    if (info.changes === 0) return res.status(404).json({ error: "Note not found or unauthorized" });
     res.json({ success: true });
+  });
+
+  app.get("/api/profile", authenticate, (req: any, res) => {
+    const user = db.prepare("SELECT * FROM users WHERE uid = ?").get(req.user.uid) as any;
+    if (!user) return res.status(404).json({ error: "User not found" });
+    
+    // Convert snake_case to camelCase for frontend
+    res.json({
+      uid: user.uid,
+      email: user.email,
+      displayName: user.display_name,
+      role: user.role,
+      rollNumber: user.roll_number,
+      specialization: user.specialization,
+      privacyConsent: user.privacy_consent === 1,
+      createdAt: user.created_at,
+      lastLogin: user.last_login
+    });
+  });
+
+  app.post("/api/profile", authenticate, (req: any, res) => {
+    const { rollNumber, specialization, privacyConsent, displayName } = req.body;
+    
+    db.prepare(`
+      UPDATE users 
+      SET roll_number = ?, specialization = ?, privacy_consent = ?, display_name = ?
+      WHERE uid = ?
+    `).run(
+      rollNumber || "",
+      specialization || "",
+      privacyConsent ? 1 : 0,
+      displayName || req.user.name || "",
+      req.user.uid
+    );
+    
+    res.json({ success: true });
+  });
+
+  app.delete("/api/profile", authenticate, async (req: any, res) => {
+    const uid = req.user.uid;
+    try {
+      // Delete user's notes
+      db.prepare("DELETE FROM notes WHERE uid = ?").run(uid);
+      
+      // Delete user's documents (only private ones) and their files
+      const userDocs = db.prepare("SELECT filename FROM documents WHERE uid = ? AND is_public = 0").all(uid) as { filename: string }[];
+      for (const doc of userDocs) {
+        const filePath = path.join(uploadDir, doc.filename);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      }
+      db.prepare("DELETE FROM documents WHERE uid = ? AND is_public = 0").run(uid);
+      
+      // Delete from users table
+      db.prepare("DELETE FROM users WHERE uid = ?").run(uid);
+      
+      // Delete from Firebase Auth
+      await admin.auth().deleteUser(uid);
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting user profile:", error);
+      res.status(500).json({ error: "Failed to delete profile" });
+    }
   });
 
   app.get("/api/documents", authenticate, (req, res) => {
@@ -460,7 +555,7 @@ async function startServer() {
         'completed',
         citation_check || null,
         (req as any).user.uid,
-        0 // Default to private
+        parseInt(req.body.is_public) || 0
       );
       res.json({ id: info.lastInsertRowid, filename: file.filename, summary });
     } catch (err) {
@@ -642,9 +737,16 @@ Generated by LexPH AI Case Summarizer
 
   app.patch("/api/documents/:id", authenticate, (req, res) => {
     const { id } = req.params;
+    const user = (req as any).user;
     const { citation_check, legal_summary, citation_analysis, title, citation, tags, author, date_published, keywords, is_public } = req.body;
 
     try {
+      // Check ownership
+      const doc = db.prepare("SELECT id FROM documents WHERE id = ? AND uid = ?").get(id, user.uid);
+      if (!doc) {
+        return res.status(403).json({ error: "Unauthorized or document not found" });
+      }
+
       if (citation_check !== undefined) {
         db.prepare("UPDATE documents SET citation_check = ? WHERE id = ?").run(
           citation_check ? JSON.stringify(citation_check) : null,
@@ -708,6 +810,13 @@ Generated by LexPH AI Case Summarizer
   });
 
   app.get("/api/documents/preview/:filename", authenticate, async (req, res) => {
+    const user = (req as any).user;
+    const doc = db.prepare("SELECT is_public, uid FROM documents WHERE filename = ?").get(req.params.filename) as any;
+    
+    if (!doc || (doc.is_public === 0 && doc.uid !== user.uid)) {
+      return res.status(403).json({ error: "Unauthorized or file not found" });
+    }
+
     const filePath = path.join(uploadDir, req.params.filename);
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: "File not found" });
@@ -743,7 +852,8 @@ Generated by LexPH AI Case Summarizer
   });
 
   app.delete("/api/documents/:id", authenticate, (req, res) => {
-    const doc = db.prepare("SELECT filename FROM documents WHERE id = ?").get(req.params.id) as any;
+    const user = (req as any).user;
+    const doc = db.prepare("SELECT filename FROM documents WHERE id = ? AND uid = ?").get(req.params.id, user.uid) as any;
     if (doc) {
       // Delete main file
       const filePath = path.join(uploadDir, doc.filename);
@@ -760,29 +870,32 @@ Generated by LexPH AI Case Summarizer
         }
       }
 
-      db.prepare("DELETE FROM documents WHERE id = ?").run(req.params.id);
+      db.prepare("DELETE FROM documents WHERE id = ? AND uid = ?").run(req.params.id, user.uid);
+      res.json({ success: true });
+    } else {
+      res.status(403).json({ error: "Unauthorized or document not found" });
     }
-    res.json({ success: true });
   });
 
   app.post("/api/documents/batch-delete", authenticate, (req, res) => {
     const { ids } = req.body;
+    const user = (req as any).user;
     if (!Array.isArray(ids)) {
       return res.status(400).json({ error: "IDs must be an array" });
     }
 
-    const deleteDoc = db.prepare("DELETE FROM documents WHERE id = ?");
-    const getDoc = db.prepare("SELECT filename FROM documents WHERE id = ?");
+    const deleteDoc = db.prepare("DELETE FROM documents WHERE id = ? AND uid = ?");
+    const getDoc = db.prepare("SELECT filename FROM documents WHERE id = ? AND uid = ?");
 
     const transaction = db.transaction((ids) => {
       for (const id of ids) {
-        const doc = getDoc.get(id);
+        const doc = getDoc.get(id, user.uid) as any;
         if (doc) {
           const filePath = path.join(uploadDir, doc.filename);
           if (fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
           }
-          deleteDoc.run(id);
+          deleteDoc.run(id, user.uid);
         }
       }
     });
@@ -793,15 +906,16 @@ Generated by LexPH AI Case Summarizer
 
   app.post("/api/documents/batch-download", authenticate, async (req, res) => {
     const { ids } = req.body;
+    const user = (req as any).user;
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ error: "IDs must be a non-empty array" });
     }
 
-    const getDoc = db.prepare("SELECT filename, title FROM documents WHERE id = ?");
+    const getDoc = db.prepare("SELECT filename, title FROM documents WHERE id = ? AND (uid = ? OR is_public = 1)");
     const filesToZip: { path: string, name: string }[] = [];
 
     for (const id of ids) {
-      const doc = getDoc.get(id) as any;
+      const doc = getDoc.get(id, user.uid) as any;
       if (doc) {
         const filePath = path.join(uploadDir, doc.filename);
         if (fs.existsSync(filePath)) {

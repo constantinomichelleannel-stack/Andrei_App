@@ -1,4 +1,51 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, Component, ErrorInfo, ReactNode } from 'react';
+
+// Error Boundary Component
+class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean, error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("Uncaught error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-zinc-50 p-4">
+          <div className="bg-white p-8 rounded-3xl shadow-xl border border-zinc-200 max-w-md w-full">
+            <div className="flex items-center gap-3 text-red-600 mb-4">
+              <AlertTriangle size={24} />
+              <h2 className="text-xl font-bold">Something went wrong</h2>
+            </div>
+            <p className="text-zinc-600 text-sm mb-6">
+              The application encountered an unexpected error. Please try refreshing the page.
+            </p>
+            <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-100 mb-6 overflow-auto max-h-40">
+              <code className="text-[10px] text-zinc-500 font-mono whitespace-pre-wrap">
+                {this.state.error?.toString()}
+              </code>
+            </div>
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full py-3 bg-zinc-900 text-white rounded-xl font-bold hover:bg-zinc-800 transition-all"
+            >
+              Reload Application
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 import { motion, AnimatePresence } from 'motion/react';
 import Fuse from 'fuse.js';
 import { 
@@ -48,13 +95,14 @@ import {
   Bookmark,
   FileSpreadsheet,
   AlertTriangle,
+  AlertCircle,
+  ShieldCheck,
   XCircle,
   Archive,
   User,
   Hash,
   GitCompare,
-  LogOut,
-  History as HistoryIcon
+  LogOut
 } from 'lucide-react';
 import DocumentItem from './components/DocumentItem';
 import { DocumentUpload } from './components/DocumentUpload';
@@ -68,6 +116,7 @@ import Markdown from 'react-markdown';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { useAuth } from './contexts/AuthContext';
+import { PRIVACY_POLICY } from './constants';
 import { AuthScreen } from './components/Auth';
 import { AdminDashboard } from './components/AdminDashboard';
 import { auth, signOut, db } from './firebase';
@@ -475,6 +524,7 @@ const DocumentLibrary = React.memo(({
   const [type, setType] = useState<'case' | 'statute' | 'memo'>('case');
   const [tags, setTags] = useState<string[]>([]);
   const [manualSummary, setManualSummary] = useState('');
+  const [isPublic, setIsPublic] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [previewDoc, setPreviewDoc] = useState<LegalDocument | null>(null);
   const [previewContent, setPreviewContent] = useState<string | null>(null);
@@ -1023,6 +1073,7 @@ Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and '
     formData.append('keywords', keywords.join(', '));
     formData.append('type', type);
     formData.append('tags', tags.join(', '));
+    formData.append('is_public', isPublic ? '1' : '0');
     if (finalSummary) {
       formData.append('summary', finalSummary);
     }
@@ -1076,6 +1127,7 @@ Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and '
       setKeywords([]);
       setTags([]);
       setManualSummary('');
+      setIsPublic(false);
       setFile(null);
       fetchDocuments();
     } catch (err) {
@@ -1960,6 +2012,8 @@ Return a JSON object with 'status' and 'analysis'.`,
             setTags={setTags}
             manualSummary={manualSummary}
             setManualSummary={setManualSummary}
+            isPublic={isPublic}
+            setIsPublic={setIsPublic}
             file={file}
             setFile={setFile}
             allTags={allTags}
@@ -2210,7 +2264,7 @@ Return a JSON object with 'status' and 'analysis'.`,
               <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg">
-                    <HistoryIcon size={20} />
+                    <History size={20} />
                   </div>
                   <div>
                     <h3 className="text-xl font-serif font-bold text-slate-900">Version History</h3>
@@ -2386,7 +2440,7 @@ Return a JSON object with 'status' and 'analysis'.`,
                   <h4 className="text-[10px] font-mono text-slate-400 uppercase tracking-widest px-2 font-bold">Previous Versions History</h4>
                   {(!selectedVersionDoc.versions || selectedVersionDoc.versions.length === 0) ? (
                     <div className="flex flex-col items-center justify-center py-12 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-                      <HistoryIcon size={32} className="text-slate-300 mb-2" />
+                      <History size={32} className="text-slate-300 mb-2" />
                       <p className="text-sm text-slate-400 italic">No previous versions available.</p>
                     </div>
                   ) : (
@@ -5275,8 +5329,9 @@ const KnowledgeBase = ({ showConfirm }: { showConfirm: (title: string, message: 
 
 
 export default function App() {
-  const { profile, loading: authLoading, isAdmin } = useAuth();
+  const { profile, loading: authLoading, isAdmin, fetchWithAuth, refreshProfile } = useAuth();
   const [activeView, setActiveView] = useState<ViewType>('dashboard');
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [summarizerInitialData, setSummarizerInitialData] = useState<{text: string, citation?: string} | null>(null);
 
   const [confirmModal, setConfirmModal] = useState<{
@@ -5297,6 +5352,37 @@ export default function App() {
     setConfirmModal({ show: true, title, message, onConfirm, type });
   }, []);
 
+  const checkPrivacyConsent = useCallback(() => {
+    if (!profile?.privacyConsent) {
+      showConfirm(
+        "Data Processing Consent Required",
+        "To use AI-powered research features, you must first enable Data Processing Consent in your Privacy Settings. Would you like to go to Settings now?",
+        () => setActiveView('settings'),
+        'info'
+      );
+      return false;
+    }
+    return true;
+  }, [profile, showConfirm, setActiveView]);
+
+  const handleDeleteAccount = useCallback(() => {
+    showConfirm(
+      "Delete Account?",
+      "Are you absolutely sure? This will permanently delete your profile, notes, and professional data. This action cannot be undone.",
+      async () => {
+        try {
+          await fetchWithAuth('/api/profile', { method: 'DELETE' });
+          await signOut(auth);
+          window.location.reload();
+        } catch (error) {
+          console.error("Failed to delete account:", error);
+          alert("Failed to delete account. Please try again.");
+        }
+      },
+      'danger'
+    );
+  }, [showConfirm, fetchWithAuth]);
+
   useEffect(() => {
     async function testConnection() {
       try {
@@ -5310,6 +5396,11 @@ export default function App() {
     testConnection();
   }, []);
 
+  const handleSummarizeFromLibrary = useCallback((text: string, citation?: string) => {
+    setSummarizerInitialData({ text, citation });
+    setActiveView('summarizer');
+  }, []);
+
   if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-zinc-50">
@@ -5319,16 +5410,16 @@ export default function App() {
   }
 
   if (!profile) {
-    return <AuthScreen />;
+    return (
+      <ErrorBoundary>
+        <AuthScreen />
+      </ErrorBoundary>
+    );
   }
 
-  const handleSummarizeFromLibrary = useCallback((text: string, citation?: string) => {
-    setSummarizerInitialData({ text, citation });
-    setActiveView('summarizer');
-  }, []);
-
   return (
-    <div className="flex min-h-screen bg-[#F8F9FA]">
+    <ErrorBoundary>
+      <div className="flex min-h-screen bg-[#F8F9FA]">
       {/* Sidebar */}
       <aside className="w-64 bg-white border-r border-slate-200 p-6 flex flex-col">
         <div className="flex items-center gap-2 mb-10 px-2">
@@ -5413,11 +5504,11 @@ export default function App() {
           <div className="pt-4 mt-4 border-t border-slate-50">
             <div className="flex items-center gap-3 px-4 py-3 mb-2">
               <div className="w-8 h-8 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-bold">
-                {profile.displayName?.charAt(0)}
+                {profile?.displayName?.charAt(0)}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-slate-900 truncate">{profile.displayName}</p>
-                <p className="text-[10px] text-slate-500 truncate">{profile.email}</p>
+                <p className="text-xs font-bold text-slate-900 truncate">{profile?.displayName}</p>
+                <p className="text-[10px] text-slate-500 truncate">{profile?.email}</p>
               </div>
             </div>
             <button 
@@ -5476,8 +5567,77 @@ export default function App() {
                 <h1 className="text-3xl font-serif font-bold text-slate-900 mb-6">Settings</h1>
                 <div className="space-y-6">
                   <div className="legal-card p-6">
-                    <h3 className="font-bold mb-4">Application Settings</h3>
-                    <p className="text-sm text-slate-500">Configure your LexPH experience.</p>
+                    <h3 className="font-bold mb-4 flex items-center gap-2">
+                      <ShieldCheck size={20} className="text-indigo-600" />
+                      Data Privacy Settings
+                    </h3>
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-100">
+                        <div>
+                          <p className="font-bold text-slate-900">Data Processing Consent</p>
+                          <p className="text-xs text-slate-500">Allow LexPH to process your legal research data for AI assistance.</p>
+                        </div>
+                        <button 
+                          onClick={async () => {
+                            if (!profile) return;
+                            try {
+                              await fetchWithAuth('/api/profile', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  rollNumber: profile.rollNumber,
+                                  specialization: profile.specialization,
+                                  displayName: profile.displayName,
+                                  privacyConsent: !profile.privacyConsent
+                                })
+                              });
+                              await refreshProfile();
+                            } catch (error) {
+                              console.error("Failed to update privacy consent:", error);
+                            }
+                          }}
+                          className={`w-12 h-6 rounded-full transition-colors relative ${profile?.privacyConsent ? 'bg-indigo-600' : 'bg-slate-300'}`}
+                        >
+                          <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${profile?.privacyConsent ? 'left-7' : 'left-1'}`} />
+                        </button>
+                      </div>
+
+                      <div className="p-4 bg-indigo-50/50 rounded-xl border border-indigo-100">
+                        <div className="flex items-start gap-3">
+                          <AlertCircle size={16} className="text-indigo-600 mt-0.5" />
+                          <div className="flex-1">
+                            <p className="text-xs font-bold text-indigo-900 mb-1">Privacy Policy</p>
+                            <p className="text-[10px] text-indigo-700 leading-relaxed mb-3">
+                              Your data is used to verify your status as a legal professional and to personalize your research experience.
+                              We use industry-standard encryption to protect your data.
+                            </p>
+                            <button 
+                              onClick={() => setShowPrivacyModal(true)}
+                              className="text-[10px] font-bold text-indigo-600 hover:underline flex items-center gap-1"
+                            >
+                              <FileText size={12} />
+                              View Full Privacy Policy
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-8 pt-6 border-t border-slate-100">
+                        <h4 className="text-xs font-mono text-red-500 uppercase mb-4">Danger Zone</h4>
+                        <div className="p-4 bg-red-50 rounded-xl border border-red-100 flex items-center justify-between">
+                          <div className="text-left">
+                            <p className="text-sm font-bold text-red-900">Delete Account</p>
+                            <p className="text-[10px] text-red-700">Permanently delete your account and all associated data. This action cannot be undone.</p>
+                          </div>
+                          <button 
+                            onClick={handleDeleteAccount}
+                            className="px-4 py-2 bg-red-600 text-white text-xs font-bold rounded-lg hover:bg-red-700 transition-all"
+                          >
+                            Delete Account
+                          </button>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -5494,6 +5654,48 @@ export default function App() {
         onCancel={() => setConfirmModal(prev => ({ ...prev, show: false }))}
         type={confirmModal.type}
       />
+
+      <AnimatePresence>
+        {showPrivacyModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border border-zinc-200"
+            >
+              <div className="p-6 bg-zinc-900 text-white flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <ShieldCheck size={24} className="text-zinc-400" />
+                  <h2 className="text-xl font-serif font-bold">Data Privacy Consent</h2>
+                </div>
+                <button 
+                  onClick={() => setShowPrivacyModal(false)}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="p-8 max-h-[60vh] overflow-y-auto">
+                <div className="prose prose-sm prose-zinc">
+                  <div className="whitespace-pre-wrap font-sans text-sm text-zinc-600 leading-relaxed">
+                    {PRIVACY_POLICY}
+                  </div>
+                </div>
+              </div>
+              <div className="p-6 bg-zinc-50 border-t border-zinc-100 flex justify-end">
+                <button 
+                  onClick={() => setShowPrivacyModal(false)}
+                  className="px-6 py-2 bg-zinc-900 text-white rounded-xl font-bold hover:bg-zinc-800 transition-all"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
+    </ErrorBoundary>
   );
 }
