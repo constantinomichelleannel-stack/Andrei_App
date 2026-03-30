@@ -53,19 +53,3 @@ export const analyzeJurisprudenceTrends = async (topic: string) => {
   });
   return response.text;
 };
-
-export const summarizeCase = async (caseText: string) => {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `Please provide a concise legal summary of the following Philippine Supreme Court decision. 
-    Include:
-    1. Case Title and G.R. Number (if provided)
-    2. Facts of the Case
-    3. Issues
-    4. Ruling (Ratio Decidendi)
-    
-    Case Text: ${caseText}`,
-  });
-  return response.text;
-};

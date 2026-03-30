@@ -10,7 +10,9 @@ import {
   serverTimestamp,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
-  updateProfile
+  updateProfile,
+  sendEmailVerification,
+  sendPasswordResetEmail
 } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { PRIVACY_POLICY } from '../constants';
@@ -25,20 +27,22 @@ import {
   Hash, 
   CheckCircle2, 
   Bot,
-  Mail,
   Lock,
   User as UserIcon,
   ArrowRight,
-  X
+  X,
+  RefreshCcw,
+  KeyRound
 } from 'lucide-react';
 
 export const AuthScreen = () => {
   const { user, profile, loading, refreshProfile, fetchWithAuth } = useAuth();
-  const [authMode, setAuthMode] = useState<'login' | 'signup' | 'google'>('login');
+  const [authMode, setAuthMode] = useState<'login' | 'signup' | 'forgot-password' | 'verification-sent' | 'password-reset-sent'>('login');
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   
   // Email/Password state
-  const [email, setEmail] = useState('');
+  const [accountIdentifier, setAccountIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [isAuthLoading, setIsAuthLoading] = useState(false);
@@ -67,10 +71,10 @@ export const AuthScreen = () => {
     setError(null);
     setIsAuthLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      await signInWithEmailAndPassword(auth, accountIdentifier, password);
     } catch (err: any) {
-      console.error("Email login error:", err);
-      setError(err.message || "Failed to sign in with email.");
+      console.error("Login error:", err);
+      setError(err.message || "Failed to sign in.");
     } finally {
       setIsAuthLoading(false);
     }
@@ -85,12 +89,75 @@ export const AuthScreen = () => {
     setError(null);
     setIsAuthLoading(true);
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const userCredential = await createUserWithEmailAndPassword(auth, accountIdentifier, password);
       await updateProfile(userCredential.user, { displayName });
-      // The onAuthStateChanged will trigger and show the profile completion screen
+      
+      // Send verification
+      await sendEmailVerification(userCredential.user);
+      setAuthMode('verification-sent');
     } catch (err: any) {
-      console.error("Email signup error:", err);
-      setError(err.message || "Failed to sign up with email.");
+      console.error("Signup error:", err);
+      if (err.code === 'auth/email-already-in-use') {
+        setError("This account identifier is already registered. Please log in instead.");
+      } else {
+        setError(err.message || "Failed to sign up.");
+      }
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!accountIdentifier) {
+      setError("Please enter your account identifier.");
+      return;
+    }
+    setError(null);
+    setIsAuthLoading(true);
+    try {
+      await sendPasswordResetEmail(auth, accountIdentifier);
+      setAuthMode('password-reset-sent');
+    } catch (err: any) {
+      console.error("Password reset error:", err);
+      setError(err.message || "Failed to send password reset link.");
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    if (!auth.currentUser) return;
+    setError(null);
+    setIsAuthLoading(true);
+    try {
+      await sendEmailVerification(auth.currentUser);
+      setSuccess("Verification link resent. Please check your inbox.");
+    } catch (err: any) {
+      console.error("Resend verification error:", err);
+      setError(err.message || "Failed to resend verification link.");
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleCheckVerification = async () => {
+    if (!auth.currentUser) return;
+    setError(null);
+    setIsAuthLoading(true);
+    try {
+      await auth.currentUser.reload();
+      if (auth.currentUser.emailVerified) {
+        setSuccess("Account verified! Redirecting...");
+        setTimeout(() => {
+          window.location.reload();
+        }, 1500);
+      } else {
+        setError("Account not yet verified. Please check your inbox and click the link.");
+      }
+    } catch (err: any) {
+      console.error("Check verification error:", err);
+      setError(err.message || "Failed to check verification status.");
     } finally {
       setIsAuthLoading(false);
     }
@@ -110,7 +177,6 @@ export const AuthScreen = () => {
       const userRef = doc(db, 'users', user.uid);
       await setDoc(userRef, {
         uid: user.uid,
-        email: user.email,
         displayName: user.displayName,
         rollNumber,
         specialization,
@@ -151,8 +217,8 @@ export const AuthScreen = () => {
     );
   }
 
-  // If logged in but no profile, show signup form (Profile Completion)
-  if (user && !profile) {
+  // If logged in but account not verified, show verification screen
+  if (user && !profile?.accountVerified && user.providerData.some(p => p.providerId === 'password')) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-zinc-50 p-4">
         <motion.div 
@@ -162,99 +228,72 @@ export const AuthScreen = () => {
         >
           <div className="p-8 bg-zinc-900 text-white">
             <div className="flex items-center gap-3 mb-2">
-              <Scale size={32} className="text-zinc-400" />
-              <h1 className="text-2xl font-serif font-bold">Complete Your Profile</h1>
+              <UserIcon size={32} className="text-zinc-400" />
+              <h1 className="text-2xl font-serif font-bold">Verify Your Account</h1>
             </div>
-            <p className="text-zinc-400 text-sm">Welcome, {user.displayName}. Please provide your professional details to access LexPH.</p>
+            <p className="text-zinc-400 text-sm">We've sent a verification link to your registered address. Please check your inbox to continue.</p>
           </div>
 
-          <form onSubmit={handleSignupSubmit} className="p-8 space-y-6">
+          <div className="p-8 space-y-6">
+            {profile?.accountVerified && (
+              <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-xl flex items-center gap-3 text-emerald-600 text-sm">
+                <ShieldCheck size={18} />
+                Account verified successfully!
+              </div>
+            )}
             {error && (
               <div className="p-4 bg-red-50 border border-red-100 rounded-xl flex items-center gap-3 text-red-600 text-sm">
                 <AlertCircle size={18} />
                 {error}
               </div>
             )}
-
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs font-mono text-zinc-400 uppercase mb-1 block">Roll of Attorneys Number</label>
-                <div className="relative">
-                  <Hash className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
-                  <input 
-                    type="text" 
-                    value={rollNumber}
-                    onChange={(e) => setRollNumber(e.target.value)}
-                    placeholder="e.g. 12345"
-                    className="w-full pl-10 pr-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 transition-all"
-                    required
-                  />
-                </div>
+            {success && (
+              <div className="p-4 bg-green-50 border border-green-100 rounded-xl flex items-center gap-3 text-green-600 text-sm">
+                <CheckCircle2 size={18} />
+                {success}
               </div>
+            )}
 
-              <div>
-                <label className="text-xs font-mono text-zinc-400 uppercase mb-1 block">Primary Specialization</label>
-                <div className="relative">
-                  <Briefcase className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
-                  <select 
-                    value={specialization}
-                    onChange={(e) => setSpecialization(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 transition-all appearance-none"
-                  >
-                    <option>General Practice</option>
-                    <option>Civil Litigation</option>
-                    <option>Criminal Law</option>
-                    <option>Labor & Employment</option>
-                    <option>Corporate Law</option>
-                    <option>Taxation</option>
-                    <option>Family Law</option>
-                    <option>Intellectual Property</option>
-                  </select>
-                </div>
-              </div>
+            <div className="text-center space-y-4">
+              <p className="text-sm text-zinc-600">
+                Didn't receive the link? Check your spam folder or click below to resend.
+              </p>
+              
+              <button 
+                onClick={handleResendVerification}
+                disabled={isAuthLoading}
+                className="w-full py-3 bg-zinc-900 text-white rounded-xl font-bold shadow-lg hover:bg-zinc-800 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isAuthLoading ? (
+                  <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <RefreshCcw size={20} />
+                )}
+                Resend Verification Link
+              </button>
+
+              <button 
+                onClick={handleCheckVerification}
+                disabled={isAuthLoading}
+                className="w-full py-3 bg-zinc-100 text-zinc-900 rounded-xl font-bold hover:bg-zinc-200 transition-all flex items-center justify-center gap-2"
+              >
+                {isAuthLoading ? (
+                  <div className="w-5 h-5 border-2 border-zinc-900/20 border-t-zinc-900 rounded-full animate-spin" />
+                ) : (
+                  <CheckCircle2 size={20} />
+                )}
+                I've Verified My Email
+              </button>
+
+              <button 
+                type="button"
+                onClick={() => signOut(auth)}
+                className="w-full text-xs text-zinc-400 hover:text-zinc-600 transition-colors"
+              >
+                Sign Out and Try Another Account
+              </button>
             </div>
-
-            <div className="p-4 bg-zinc-50 rounded-xl border border-zinc-200">
-              <h4 className="text-xs font-mono text-zinc-400 uppercase mb-2 flex items-center gap-2">
-                <ShieldCheck size={14} /> Data Privacy Consent
-              </h4>
-              <div className="max-h-32 overflow-y-auto text-[10px] text-zinc-500 mb-4 font-sans whitespace-pre-wrap bg-white p-3 rounded border border-zinc-100">
-                {PRIVACY_POLICY}
-              </div>
-              <label className="flex items-start gap-3 cursor-pointer group">
-                <input 
-                  type="checkbox" 
-                  checked={privacyConsent}
-                  onChange={(e) => setPrivacyConsent(e.target.checked)}
-                  className="mt-1"
-                />
-                <span className="text-xs text-zinc-600 group-hover:text-zinc-900 transition-colors">
-                  I have read and agree to the LexPH Data Privacy Consent. I understand my professional data will be used for verification purposes.
-                </span>
-              </label>
-            </div>
-
-            <button 
-              type="submit"
-              disabled={isSubmitting || !privacyConsent}
-              className="w-full py-3 bg-zinc-900 text-white rounded-xl font-bold shadow-lg hover:bg-zinc-800 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              {isSubmitting ? (
-                <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-              ) : (
-                <UserPlus size={20} />
-              )}
-              Complete Signup
-            </button>
-
-            <button 
-              type="button"
-              onClick={() => signOut(auth)}
-              className="w-full text-xs text-zinc-400 hover:text-zinc-600 transition-colors"
-            >
-              Cancel and Sign Out
-            </button>
-          </form>
+          </div>
         </motion.div>
       </div>
     );
@@ -288,7 +327,9 @@ export const AuthScreen = () => {
           </div>
           
           <h2 className="text-xl font-bold text-zinc-900 mb-6 text-center">
-            {authMode === 'signup' ? 'Create Professional Account' : 'Lawyer Login'}
+            {authMode === 'signup' ? 'Create Professional Account' : 
+             authMode === 'forgot-password' ? 'Reset Password' : 
+             authMode === 'verification-sent' ? 'Check Your Email' : 'Lawyer Login'}
           </h2>
           
           {error && (
@@ -298,16 +339,23 @@ export const AuthScreen = () => {
             </div>
           )}
 
+          {success && (
+            <div className="mb-6 p-4 bg-green-50 border border-green-100 rounded-2xl flex items-center gap-3 text-green-600 text-sm">
+              <CheckCircle2 size={18} />
+              {success}
+            </div>
+          )}
+
           <div className="space-y-4">
             {authMode === 'login' ? (
               <form onSubmit={handleEmailLogin} className="space-y-4">
                 <div className="relative">
-                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                  <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
                   <input 
                     type="email" 
-                    placeholder="Professional Email" 
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="Professional Account ID" 
+                    value={accountIdentifier}
+                    onChange={(e) => setAccountIdentifier(e.target.value)}
                     className="w-full pl-12 pr-4 py-3 bg-zinc-50 border border-zinc-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all"
                     required
                   />
@@ -322,6 +370,15 @@ export const AuthScreen = () => {
                     className="w-full pl-12 pr-4 py-3 bg-zinc-50 border border-zinc-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all"
                     required
                   />
+                </div>
+                <div className="flex justify-end">
+                  <button 
+                    type="button"
+                    onClick={() => setAuthMode('forgot-password')}
+                    className="text-xs text-zinc-500 hover:text-zinc-900 font-medium"
+                  >
+                    Forgot Password?
+                  </button>
                 </div>
                 <button 
                   type="submit"
@@ -342,7 +399,7 @@ export const AuthScreen = () => {
                   </button>
                 </p>
               </form>
-            ) : (
+            ) : authMode === 'signup' ? (
               <form onSubmit={handleEmailSignup} className="space-y-4">
                 <div className="relative">
                   <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
@@ -356,12 +413,12 @@ export const AuthScreen = () => {
                   />
                 </div>
                 <div className="relative">
-                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                  <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
                   <input 
                     type="email" 
-                    placeholder="Professional Email" 
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="Professional Account ID" 
+                    value={accountIdentifier}
+                    onChange={(e) => setAccountIdentifier(e.target.value)}
                     className="w-full pl-12 pr-4 py-3 bg-zinc-50 border border-zinc-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all"
                     required
                   />
@@ -385,6 +442,15 @@ export const AuthScreen = () => {
                   {isAuthLoading ? <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" /> : <UserPlus size={20} />}
                   Create Account
                 </button>
+                <div className="flex justify-center">
+                  <button 
+                    type="button"
+                    onClick={() => setAuthMode('forgot-password')}
+                    className="text-xs text-zinc-500 hover:text-zinc-900 font-medium"
+                  >
+                    Forgot Password?
+                  </button>
+                </div>
                 <p className="text-center text-sm text-zinc-500">
                   Already have an account? {' '}
                   <button 
@@ -396,6 +462,81 @@ export const AuthScreen = () => {
                   </button>
                 </p>
               </form>
+            ) : authMode === 'forgot-password' ? (
+              <form onSubmit={handleForgotPassword} className="space-y-4">
+                <p className="text-xs text-zinc-500 text-center mb-4">
+                  Enter your account identifier and we'll send you a link to reset your password.
+                </p>
+                <div className="relative">
+                  <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                  <input 
+                    type="email" 
+                    placeholder="Professional Account ID" 
+                    value={accountIdentifier}
+                    onChange={(e) => setAccountIdentifier(e.target.value)}
+                    className="w-full pl-12 pr-4 py-3 bg-zinc-50 border border-zinc-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all"
+                    required
+                  />
+                </div>
+                <button 
+                  type="submit"
+                  disabled={isAuthLoading}
+                  className="w-full py-4 bg-zinc-900 text-white rounded-2xl font-bold hover:bg-zinc-800 transition-all flex items-center justify-center gap-2 shadow-lg shadow-zinc-200"
+                >
+                  {isAuthLoading ? <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" /> : <KeyRound size={20} />}
+                  Send Reset Link
+                </button>
+                <p className="text-center text-sm text-zinc-500">
+                  Remembered your password? {' '}
+                  <button 
+                    type="button"
+                    onClick={() => setAuthMode('login')}
+                    className="text-zinc-900 font-bold hover:underline"
+                  >
+                    Log in
+                  </button>
+                </p>
+              </form>
+            ) : authMode === 'password-reset-sent' ? (
+              <div className="text-center space-y-6">
+                <div className="mx-auto w-16 h-16 bg-zinc-50 rounded-full flex items-center justify-center text-zinc-900">
+                  <KeyRound size={32} />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm text-zinc-600">
+                    We've sent a password reset link to your registered address.
+                  </p>
+                  <p className="text-xs text-zinc-400">
+                    Please check your inbox and follow the instructions to reset your password.
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setAuthMode('login')}
+                  className="w-full py-4 bg-zinc-900 text-white rounded-2xl font-bold hover:bg-zinc-800 transition-all"
+                >
+                  Back to Login
+                </button>
+              </div>
+            ) : (
+              <div className="text-center space-y-6">
+                <div className="mx-auto w-16 h-16 bg-zinc-50 rounded-full flex items-center justify-center text-zinc-900">
+                  <UserIcon size={32} />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm text-zinc-600">
+                    We've sent a verification link to your registered address.
+                  </p>
+                  <p className="text-xs text-zinc-400">
+                    Please click the link in the message to verify your account and continue.
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setAuthMode('login')}
+                  className="w-full py-4 bg-zinc-900 text-white rounded-2xl font-bold hover:bg-zinc-800 transition-all"
+                >
+                  Back to Login
+                </button>
+              </div>
             )}
 
             <div className="flex items-center gap-4 text-zinc-300 my-4">

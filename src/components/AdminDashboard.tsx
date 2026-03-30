@@ -24,7 +24,33 @@ export const AdminDashboard = () => {
   const [stats, setStats] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const { fetchWithAuth } = useAuth();
+  const [isResetting, setIsResetting] = useState(false);
+  const { fetchWithAuth, profile } = useAuth();
+
+  const handleResetUsers = async () => {
+    if (!window.confirm("CRITICAL: This will delete ALL users (except you), ALL documents, and ALL notes. This action is irreversible. Are you absolutely sure?")) {
+      return;
+    }
+
+    setIsResetting(true);
+    try {
+      const res = await fetchWithAuth('/api/admin/reset-users', {
+        method: 'POST'
+      });
+      if (res.ok) {
+        alert("System reset successful. All users and data have been cleared.");
+        fetchData();
+      } else {
+        const data = await res.json();
+        alert(`Reset failed: ${data.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Failed to reset users:', error);
+      alert("Failed to reset users. See console for details.");
+    } finally {
+      setIsResetting(false);
+    }
+  };
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -67,7 +93,6 @@ export const AdminDashboard = () => {
   };
 
   const filteredUsers = users.filter(user => 
-    user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
     user.display_name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -84,9 +109,29 @@ export const AdminDashboard = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-serif font-bold text-slate-900">Admin Control Center</h1>
-          <p className="text-slate-500 mt-1">Manage users, system health, and global analytics.</p>
+          <div className="flex items-center gap-4 mt-1">
+            <p className="text-slate-500">Manage users, system health, and global analytics.</p>
+            {profile?.lastLoginAt && (
+              <div className="flex items-center gap-1.5 px-3 py-1 bg-indigo-50 text-indigo-600 rounded-full text-[10px] font-bold uppercase tracking-wider border border-indigo-100">
+                <Clock size={10} />
+                Your Last Login: {new Date(profile.lastLoginAt.seconds ? profile.lastLoginAt.seconds * 1000 : profile.lastLoginAt).toLocaleString()}
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex gap-3">
+          <button 
+            onClick={handleResetUsers}
+            disabled={isResetting}
+            className="flex items-center gap-2 px-4 py-2 bg-red-50 border border-red-100 rounded-xl text-sm font-bold text-red-600 hover:bg-red-100 transition-all shadow-sm disabled:opacity-50"
+          >
+            {isResetting ? (
+              <div className="w-4 h-4 border-2 border-red-600/20 border-t-red-600 rounded-full animate-spin" />
+            ) : (
+              <ShieldAlert size={18} />
+            )}
+            Reset All Users
+          </button>
           <button 
             onClick={fetchData}
             className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 transition-all shadow-sm"
@@ -162,11 +207,15 @@ export const AdminDashboard = () => {
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-bold">
-                          {user.display_name?.[0] || user.email[0].toUpperCase()}
+                          {user.display_name?.[0] || '?'}
                         </div>
                         <div>
-                          <p className="text-sm font-bold text-slate-900">{user.display_name || 'Anonymous'}</p>
-                          <p className="text-xs text-slate-500">{user.email}</p>
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-sm font-bold text-slate-900">{user.display_name || 'Anonymous'}</p>
+                            {user.account_verified === 1 && (
+                              <ShieldCheck size={12} className="text-emerald-500" />
+                            )}
+                          </div>
                         </div>
                       </div>
                     </td>
@@ -181,9 +230,15 @@ export const AdminDashboard = () => {
                       </span>
                     </td>
                     <td className="px-6 py-4">
-                      <p className="text-xs text-slate-500 flex items-center gap-1">
-                        <Clock size={12} /> {new Date(user.last_login).toLocaleDateString()}
-                      </p>
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                          <Clock size={12} className="text-slate-400" />
+                          <span>{new Date(user.last_login).toLocaleDateString()}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 ml-4">
+                          {new Date(user.last_login).toLocaleTimeString()}
+                        </div>
+                      </div>
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -218,11 +273,15 @@ export const AdminDashboard = () => {
                 <div key={user.uid} className="flex items-center justify-between p-3 rounded-2xl hover:bg-slate-50 transition-colors border border-transparent hover:border-slate-100">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center text-xs font-bold">
-                      {user.display_name?.[0] || user.email[0].toUpperCase()}
+                      {user.display_name?.[0] || '?'}
                     </div>
                     <div>
                       <p className="text-xs font-bold text-slate-900">{user.display_name || 'Anonymous'}</p>
-                      <p className="text-[10px] text-slate-400">{new Date(user.last_login).toLocaleTimeString()}</p>
+                      <p className="text-[10px] text-slate-400">
+                        {new Date(user.last_login).toLocaleDateString() === new Date().toLocaleDateString() 
+                          ? `Today at ${new Date(user.last_login).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                          : new Date(user.last_login).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </p>
                     </div>
                   </div>
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${

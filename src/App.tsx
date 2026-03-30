@@ -102,7 +102,14 @@ import {
   User,
   Hash,
   GitCompare,
-  LogOut
+  LogOut,
+  Terminal,
+  Maximize2,
+  Minimize2,
+  Printer,
+  Moon,
+  Sun,
+  Coffee
 } from 'lucide-react';
 import DocumentItem from './components/DocumentItem';
 import { DocumentUpload } from './components/DocumentUpload';
@@ -123,6 +130,24 @@ import { auth, signOut, db } from './firebase';
 import { getDocFromServer, doc } from 'firebase/firestore';
 
 // Components
+const HighlightedText = ({ text, search }: { text: string, search: string }) => {
+  if (!search.trim()) return <>{text}</>;
+  try {
+    const parts = text.split(new RegExp(`(${search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'));
+    return (
+      <>
+        {parts.map((part, i) => 
+          part.toLowerCase() === search.toLowerCase() ? 
+            <mark key={i} className="bg-yellow-200 text-slate-900 rounded-sm px-0.5">{part}</mark> : 
+            part
+        )}
+      </>
+    );
+  } catch (e) {
+    return <>{text}</>;
+  }
+};
+
 const SidebarItem = ({ 
   icon: Icon, 
   label, 
@@ -155,7 +180,45 @@ const Dashboard = ({
   onViewStatutes: () => void
 }) => {
   const { documents } = useDocumentStore();
+  const { fetchWithAuth } = useAuth();
+  const [stats, setStats] = useState<{
+    documents: number;
+    notes: number;
+    publicDocuments: number;
+    activeCases: number;
+    winProbability: number;
+    aiTasks: string;
+  } | null>(null);
+  const [recentDocs, setRecentDocs] = useState<LegalDocument[]>([]);
+  const [loading, setLoading] = useState(true);
   
+  useEffect(() => {
+    const fetchDashboardData = async () => {
+      try {
+        const [statsRes, docsRes] = await Promise.all([
+          fetchWithAuth('/api/dashboard/stats'),
+          fetchWithAuth('/api/documents?view=public&limit=3')
+        ]);
+        
+        if (statsRes.ok) {
+          const statsData = await statsRes.json();
+          setStats(statsData);
+        }
+        
+        if (docsRes.ok) {
+          const docsData = await docsRes.json();
+          setRecentDocs(docsData.slice(0, 3));
+        }
+      } catch (err) {
+        console.error("Dashboard fetch error:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchDashboardData();
+  }, [fetchWithAuth]);
+
   const citationStats = useMemo(() => {
     const stats = {
       valid: 0,
@@ -173,6 +236,8 @@ const Dashboard = ({
     
     return stats;
   }, [documents]);
+
+  if (loading) return <DashboardSkeleton />;
 
   return (
     <div className="space-y-6">
@@ -217,8 +282,8 @@ const Dashboard = ({
             </div>
             <span className="text-xs font-mono opacity-60">ACTIVE CASES</span>
           </div>
-          <div className="text-4xl font-serif font-bold">12</div>
-          <p className="text-sm opacity-60 mt-2">+2 from last month</p>
+          <div className="text-4xl font-serif font-bold">{stats?.activeCases || 0}</div>
+          <p className="text-sm opacity-60 mt-2">Based on your case load</p>
         </div>
 
         <div 
@@ -231,7 +296,7 @@ const Dashboard = ({
             </div>
             <span className="text-xs font-mono text-slate-400">AI AGENT TASKS</span>
           </div>
-          <div className="text-4xl font-serif font-bold text-slate-900">Active</div>
+          <div className="text-4xl font-serif font-bold text-slate-900">{stats?.aiTasks || 'Active'}</div>
           <p className="text-sm text-slate-500 mt-2">Automated workflows active</p>
         </div>
 
@@ -245,9 +310,9 @@ const Dashboard = ({
             </div>
             <span className="text-xs font-mono text-slate-400">WIN PROBABILITY (AVG)</span>
           </div>
-          <div className="text-4xl font-serif font-bold text-slate-900">74%</div>
+          <div className="text-4xl font-serif font-bold text-slate-900">{stats?.winProbability || 0}%</div>
           <p className="text-sm text-emerald-600 mt-2 flex items-center gap-1">
-            <TrendingUp size={14} /> +3.2% from last week
+            <TrendingUp size={14} /> AI-driven prediction
           </p>
         </div>
 
@@ -258,8 +323,8 @@ const Dashboard = ({
             </div>
             <span className="text-xs font-mono text-slate-400">TOTAL DOCUMENTS</span>
           </div>
-          <div className="text-4xl font-serif font-bold text-slate-900">{documents.length}</div>
-          <p className="text-sm text-slate-500 mt-2">In document library</p>
+          <div className="text-4xl font-serif font-bold text-slate-900">{stats?.documents || 0}</div>
+          <p className="text-sm text-slate-500 mt-2">In your private library</p>
         </div>
       </div>
 
@@ -316,19 +381,21 @@ const Dashboard = ({
             <Gavel size={20} /> Recent Jurisprudence
           </h3>
           <div className="space-y-4">
-            {[
-              { title: "People vs. Santos", gr: "G.R. No. 245123", date: "Feb 20, 2026" },
-              { title: "Cruz vs. Republic", gr: "G.R. No. 210987", date: "Feb 15, 2026" },
-              { title: "SMC vs. NLRC", gr: "G.R. No. 198765", date: "Feb 10, 2026" },
-            ].map((item, i) => (
-              <div key={i} className="flex items-center justify-between p-3 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer border-b border-slate-100 last:border-0">
-                <div>
-                  <div className="font-medium text-slate-900">{item.title}</div>
-                  <div className="text-xs text-slate-500 font-mono">{item.gr}</div>
+            {recentDocs.length > 0 ? (
+              recentDocs.map((doc, i) => (
+                <div key={i} className="flex items-center justify-between p-3 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer border-b border-slate-100 last:border-0">
+                  <div>
+                    <div className="font-medium text-slate-900 truncate max-w-[250px]">{doc.title || doc.filename}</div>
+                    <div className="text-xs text-slate-500 font-mono">{doc.citation || 'No citation'}</div>
+                  </div>
+                  <div className="text-xs text-slate-400">{new Date(doc.uploaded_at).toLocaleDateString()}</div>
                 </div>
-                <div className="text-xs text-slate-400">{item.date}</div>
+              ))
+            ) : (
+              <div className="text-center py-8 text-slate-400 text-sm italic">
+                No recent jurisprudence found.
               </div>
-            ))}
+            )}
           </div>
           <button 
             onClick={onViewAllJurisprudence}
@@ -371,6 +438,84 @@ const Dashboard = ({
 
 
 
+
+const SplashScreen = () => (
+  <motion.div 
+    initial={{ opacity: 1 }}
+    exit={{ opacity: 0 }}
+    transition={{ duration: 0.5 }}
+    className="fixed inset-0 z-[200] bg-slate-900 flex flex-col items-center justify-center"
+  >
+    <motion.div
+      initial={{ scale: 0.8, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ duration: 0.8, ease: "easeOut" }}
+      className="relative"
+    >
+      <div className="w-24 h-24 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin mb-8" />
+      <div className="absolute inset-0 flex items-center justify-center">
+        <Scale size={32} className="text-indigo-400" />
+      </div>
+    </motion.div>
+    <motion.h1 
+      initial={{ y: 20, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      transition={{ delay: 0.3, duration: 0.5 }}
+      className="text-4xl font-serif font-bold text-white tracking-tight"
+    >
+      LexPH
+    </motion.h1>
+    <motion.p 
+      initial={{ y: 20, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      transition={{ delay: 0.5, duration: 0.5 }}
+      className="text-indigo-300 font-mono text-xs uppercase tracking-[0.3em] mt-2"
+    >
+      Agentic Legal Intelligence
+    </motion.p>
+  </motion.div>
+);
+
+const Skeleton = ({ className }: { className?: string }) => (
+  <div className={`animate-pulse bg-slate-200 rounded-lg ${className}`} />
+);
+
+const DocumentSkeleton = () => (
+  <div className="legal-card p-4 space-y-4">
+    <div className="flex items-start justify-between">
+      <div className="flex items-center gap-3 flex-1">
+        <Skeleton className="w-10 h-10 rounded-xl" />
+        <div className="space-y-2 flex-1">
+          <Skeleton className="h-5 w-3/4" />
+          <Skeleton className="h-3 w-1/2" />
+        </div>
+      </div>
+      <Skeleton className="w-8 h-8 rounded-lg" />
+    </div>
+    <div className="space-y-2">
+      <Skeleton className="h-3 w-full" />
+      <Skeleton className="h-3 w-5/6" />
+    </div>
+    <div className="flex gap-2">
+      <Skeleton className="h-5 w-16 rounded-full" />
+      <Skeleton className="h-5 w-20 rounded-full" />
+    </div>
+  </div>
+);
+
+const DashboardSkeleton = () => (
+  <div className="space-y-6">
+    <div className="space-y-2">
+      <Skeleton className="h-8 w-48" />
+      <Skeleton className="h-4 w-64" />
+    </div>
+    <Skeleton className="h-48 w-full rounded-2xl" />
+    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-32 w-full rounded-2xl" />)}
+    </div>
+    <Skeleton className="h-64 w-full rounded-2xl" />
+  </div>
+);
 
 const ConfirmModal = ({ 
   show, 
@@ -439,13 +584,9 @@ const ConfirmModal = ({
 };
 
 const DocumentLibrary = React.memo(({ 
-  onSummarize,
-  setSummarizerInitialData,
   setActiveView,
   showConfirm
 }: { 
-  onSummarize?: (text: string, citation?: string) => void,
-  setSummarizerInitialData: (data: {text: string, citation?: string} | null) => void,
   setActiveView: (view: ViewType) => void,
   showConfirm: (title: string, message: string, onConfirm: () => void, type?: 'danger' | 'warning' | 'info') => void
 }) => {
@@ -529,10 +670,12 @@ const DocumentLibrary = React.memo(({
   const [previewDoc, setPreviewDoc] = useState<LegalDocument | null>(null);
   const [previewContent, setPreviewContent] = useState<string | null>(null);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [previewSearch, setPreviewSearch] = useState('');
+  const [isPreviewFullScreen, setIsPreviewFullScreen] = useState(false);
+  const [readingMode, setReadingMode] = useState<'light' | 'sepia' | 'dark'>('light');
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
   const [isBatchDownloading, setIsBatchDownloading] = useState(false);
   const [isBatchCheckingCitations, setIsBatchCheckingCitations] = useState(false);
-  const [isBatchSummarizing, setIsBatchSummarizing] = useState(false);
   const [isBatchEditing, setIsBatchEditing] = useState(false);
   const [batchEditTitle, setBatchEditTitle] = useState('');
   const [batchEditCitation, setBatchEditCitation] = useState('');
@@ -548,6 +691,7 @@ const DocumentLibrary = React.memo(({
   const [editDatePublished, setEditDatePublished] = useState('');
   const [editKeywords, setEditKeywords] = useState<string[]>([]);
   const [editTags, setEditTags] = useState<string[]>([]);
+  const [editType, setEditType] = useState<'case' | 'statute' | 'memo'>('case');
   const [isUpdating, setIsUpdating] = useState(false);
   const [selectedVersionDoc, setSelectedVersionDoc] = useState<LegalDocument | null>(null);
   const [isUploadingVersion, setIsUploadingVersion] = useState(false);
@@ -566,6 +710,7 @@ const DocumentLibrary = React.memo(({
   const [comparisonContent, setComparisonContent] = useState<{ current: string, target: string } | null>(null);
   const [isComparisonLoading, setIsComparisonLoading] = useState(false);
   const [viewingVersion, setViewingVersion] = useState<any | null>(null);
+  const [batchEditType, setBatchEditType] = useState<'case' | 'statute' | 'memo' | ''>('');
 
   const popularTags = useMemo(() => {
     const tagCounts: Record<string, number> = {};
@@ -628,10 +773,25 @@ const DocumentLibrary = React.memo(({
 
   const fuse = useMemo(() => {
     return new Fuse(documents, {
-      keys: ['title', 'citation', 'tags', 'author', 'keywords'],
-      threshold: 0.3,
+      keys: [
+        { name: 'title', weight: 1.0 },
+        { name: 'citation', weight: 0.8 },
+        { name: 'tags', weight: 0.7 },
+        { name: 'keywords', weight: 0.7 },
+        { name: 'summary', weight: 0.6 },
+        { name: 'legal_summary.facts', weight: 0.5 },
+        { name: 'legal_summary.issues', weight: 0.5 },
+        { name: 'legal_summary.ruling', weight: 0.5 },
+        { name: 'legal_summary.analysis', weight: 0.5 },
+        { name: 'legal_summary.key_doctrines', weight: 0.6 },
+        { name: 'citation_analysis', weight: 0.4 },
+        { name: 'author', weight: 0.4 }
+      ],
+      threshold: 0.4,
       distance: 100,
-      includeMatches: true
+      includeMatches: true,
+      useExtendedSearch: true,
+      ignoreLocation: true
     });
   }, [documents]);
 
@@ -1406,133 +1566,6 @@ Return a JSON object with 'status' (one of: 'valid', 'caution', 'invalid') and '
     }
   };
 
-  const handleBatchSummarize = async () => {
-    if (selectedIds.length === 0) return;
-    if (!process.env.GEMINI_API_KEY) {
-      alert("API Key not found. Please add your GEMINI_API_KEY in the Settings > Secrets menu.");
-      return;
-    }
-
-    setIsBatchSummarizing(true);
-    setBatchAiProgress(0);
-    setBatchAiStep('Initializing batch summarization...');
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-    try {
-      let count = 0;
-      for (const id of selectedIds) {
-        count++;
-        const doc = documents.find(d => d.id === id);
-        if (!doc) continue;
-
-        const currentProgress = Math.round(((count - 1) / selectedIds.length) * 100);
-        setBatchAiProgress(currentProgress);
-        setBatchAiStep(`Summarizing ${count} of ${selectedIds.length}: ${doc.title}...`);
-        setProcessingStep(`Generating summary for: ${doc.title}`);
-
-        try {
-          // 1. Fetch content
-          const res = await fetchWithAuth(`/api/documents/preview/${doc.filename}`);
-          const data = await res.json();
-          if (!data.content) continue;
-
-          // 2. Generate Summary with Gemini
-          const summaryResponse = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: [
-              {
-                parts: [
-                  {
-                    text: `You are an expert Philippine Legal Researcher. Analyze the provided document and generate a structured legal summary.
-
-First, determine the document type:
-- CASE: A court decision (e.g., Supreme Court, Court of Appeals).
-- STATUTE: A law, Republic Act, or Ordinance.
-- ADMINISTRATIVE: An executive order, circular, or regulation.
-- OTHER: Any other legal document.
-
-Based on the type, extract:
-For CASES:
-- **Title**: Full case title.
-- **Citation**: G.R. Number and Date.
-- **Facts**: Concise summary of relevant facts.
-- **Issues**: The core legal questions addressed.
-- **Ruling**: The Court's decision.
-- **Analysis**: The Ratio Decidendi and established doctrine.
-
-For STATUTES/ADMINISTRATIVE:
-- **Title**: Official name/number.
-- **Citation**: Date of effectivity or publication.
-- **Facts**: Purpose or preamble summary.
-- **Issues**: Key provisions or changes introduced.
-- **Ruling**: Scope and applicability.
-- **Analysis**: Legal implications and related laws.
-
-Return a JSON object with 'type', 'title', 'citation', 'facts', 'issues', 'ruling', 'analysis', and 'key_doctrines' (an array of strings).
-                    
-                    Document Content: ${data.content.substring(0, 100000)}`,
-                  },
-                ],
-              },
-            ],
-            config: {
-              thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  type: { type: Type.STRING, enum: ['CASE', 'STATUTE', 'ADMINISTRATIVE', 'OTHER'] },
-                  title: { type: Type.STRING },
-                  citation: { type: Type.STRING },
-                  facts: { type: Type.STRING },
-                  issues: { type: Type.STRING },
-                  ruling: { type: Type.STRING },
-                  analysis: { type: Type.STRING },
-                  key_doctrines: { 
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING }
-                  },
-                },
-                required: ['type', 'title', 'citation', 'facts', 'issues', 'ruling', 'analysis']
-              }
-            }
-          });
-
-          if (summaryResponse.text) {
-            const summaryData = JSON.parse(summaryResponse.text);
-            
-            // 3. Update metadata
-            await fetchWithAuth(`/api/documents/${id}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ legal_summary: summaryData }),
-            });
-            
-            // Update local state immediately for better feedback
-            fetchDocuments();
-            setBatchAiProgress(Math.round((count / selectedIds.length) * 100));
-          }
-        } catch (err) {
-          console.error(`Summarization failed for document ${id}:`, err);
-        }
-      }
-      setBatchAiProgress(100);
-      setBatchAiStep('Batch summarization complete!');
-      setSelectedIds([]);
-      setProcessingStep(null);
-    } catch (err) {
-      console.error('Batch summarization error:', err);
-      setBatchAiStep('Batch summarization failed');
-      setProcessingStep(null);
-    } finally {
-      setTimeout(() => {
-        setIsBatchSummarizing(false);
-        setBatchAiProgress(0);
-        setBatchAiStep(null);
-      }, 2000);
-    }
-  };
-
   const handleExportCitationAnalysis = useCallback((doc: LegalDocument) => {
     if (!doc.citation_analysis && (!doc.citation_check || !doc.citation_check.analysis)) return;
 
@@ -1789,6 +1822,63 @@ Return a JSON object with 'status' and 'analysis'.`,
     }
   };
 
+  const handlePrint = () => {
+    const printWindow = window.open('', '_blank');
+    if (printWindow && previewContent) {
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>${previewDoc?.title || 'Document Preview'}</title>
+            <style>
+              body { font-family: serif; padding: 40px; line-height: 1.6; color: #333; }
+              pre { white-space: pre-wrap; word-wrap: break-word; font-family: inherit; }
+              h1 { border-bottom: 2px solid #eee; padding-bottom: 10px; }
+            </style>
+          </head>
+          <body>
+            <h1>${previewDoc?.title || 'Document Preview'}</h1>
+            <pre>${previewContent}</pre>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.print();
+    }
+  };
+
+  const handleDownloadPreview = async () => {
+    const doc = viewingVersion ? selectedVersionDoc : previewDoc;
+    if (!doc) return;
+    
+    try {
+      const token = await getAuthToken();
+      const response = await fetch(`/api/documents/download/${doc.id}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = doc.filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }
+    } catch (error) {
+      console.error('Download error:', error);
+    }
+  };
+
+  const getReadingModeClasses = () => {
+    switch (readingMode) {
+      case 'sepia': return 'bg-[#f4ecd8] text-[#5b4636]';
+      case 'dark': return 'bg-[#1a1a1a] text-[#d1d1d1]';
+      default: return 'bg-white text-slate-700';
+    }
+  };
+
   const handleRevert = async (docId: number, versionId: number) => {
     if (!confirm('Are you sure you want to revert to this version? The current version will be saved in history.')) return;
     try {
@@ -1860,7 +1950,8 @@ Return a JSON object with 'status' and 'analysis'.`,
           tags: editTags.join(', '),
           author: editAuthor,
           date_published: editDatePublished,
-          keywords: editKeywords.join(', ')
+          keywords: editKeywords.join(', '),
+          type: editType
         }),
       });
       if (res.ok) {
@@ -1900,6 +1991,7 @@ Return a JSON object with 'status' and 'analysis'.`,
         if (batchEditAuthor) body.author = batchEditAuthor;
         if (batchEditDatePublished) body.date_published = batchEditDatePublished;
         if (batchEditKeywords.length > 0) body.keywords = batchEditKeywords.join(', ');
+        if (batchEditType) body.type = batchEditType;
         
         if (Object.keys(body).length === 0) return Promise.resolve();
 
@@ -1918,6 +2010,7 @@ Return a JSON object with 'status' and 'analysis'.`,
       setBatchEditAuthor('');
       setBatchEditDatePublished('');
       setBatchEditKeywords([]);
+      setBatchEditType('');
       setSelectedIds([]);
       fetchDocuments();
     } catch (err) {
@@ -1986,12 +2079,155 @@ Return a JSON object with 'status' and 'analysis'.`,
 
   return (
     <div className="space-y-8">
-      <header className="flex justify-between items-end">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
           <h1 className="text-3xl font-serif font-bold text-slate-900">Document Library</h1>
           <p className="text-slate-500">Centralized repository for case law, statutes, and legal memoranda.</p>
         </div>
+        <div className="flex items-center gap-2">
+          <div className="bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full text-xs font-bold border border-indigo-100">
+            {documents.length} Total Documents
+          </div>
+          <div className="bg-emerald-50 text-emerald-700 px-3 py-1 rounded-full text-xs font-bold border border-emerald-100">
+            {filteredDocuments.length} Filtered
+          </div>
+        </div>
       </header>
+
+      {/* Prominent Search Bar */}
+      <motion.div 
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="relative group"
+      >
+        <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+          <Search className="h-5 w-5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
+        </div>
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search documents by title, summaries, tags, keywords, or citations..."
+          className="block w-full pl-12 pr-12 py-4 bg-white border-2 border-slate-100 rounded-2xl text-lg font-medium placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all shadow-sm hover:shadow-md"
+        />
+        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="p-2 text-slate-400 hover:text-slate-600 transition-colors"
+              aria-label="Clear search"
+            >
+              <X size={20} />
+            </button>
+          )}
+          <div className="h-6 w-px bg-slate-200 mx-1" />
+          <button 
+            onClick={() => setIsSavingSearch(true)}
+            className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
+            title="Save current search"
+          >
+            <Bookmark size={20} />
+          </button>
+          <div className="relative">
+            <button 
+              onClick={() => setShowSavedSearches(!showSavedSearches)}
+              className={`p-2 rounded-xl transition-all ${showSavedSearches ? 'text-indigo-600 bg-indigo-50' : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'}`}
+              title="View saved searches"
+            >
+              <History size={20} />
+            </button>
+            
+            <AnimatePresence>
+              {showSavedSearches && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                  className="absolute right-0 mt-3 w-80 bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden"
+                >
+                  <div className="p-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Search History & Saved</span>
+                    <button onClick={() => setShowSavedSearches(false)} className="text-slate-400 hover:text-slate-600">
+                      <X size={16} />
+                    </button>
+                  </div>
+                  <div className="max-h-96 overflow-y-auto">
+                    {savedSearches.length > 0 && (
+                      <div className="p-3 bg-slate-50/50 border-b border-slate-100">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Pinned & Saved</span>
+                      </div>
+                    )}
+                    {savedSearches.map(search => (
+                      <div 
+                        key={search.id}
+                        className="group p-4 border-b border-slate-50 hover:bg-indigo-50/50 transition-colors flex items-center justify-between"
+                      >
+                        <button 
+                          onClick={() => {
+                            applySavedSearch(search);
+                            setShowSavedSearches(false);
+                          }}
+                          className="flex-1 text-left"
+                        >
+                          <p className="text-sm font-bold text-slate-900 truncate">{search.name}</p>
+                          <p className="text-xs text-slate-500 truncate">
+                            {search.query || 'No query'} • {search.filter}
+                          </p>
+                        </button>
+                        <button 
+                          onClick={() => removeSavedSearch(search.id)}
+                          className="p-2 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    ))}
+
+                    {recentSearches.length > 0 && (
+                      <>
+                        <div className="p-3 bg-slate-50/50 border-b border-slate-100 flex justify-between items-center">
+                          <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Recent Searches</span>
+                          <button 
+                            onClick={clearRecentSearches}
+                            className="text-[10px] text-slate-400 hover:text-red-500 font-bold"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                        {recentSearches.map(search => (
+                          <div 
+                            key={search.id}
+                            className="group p-4 border-b border-slate-50 hover:bg-slate-50 transition-colors flex items-center justify-between"
+                          >
+                            <button 
+                              onClick={() => {
+                                applySavedSearch({ ...search.filters, query: search.query });
+                                setShowSavedSearches(false);
+                              }}
+                              className="flex-1 text-left"
+                            >
+                              <p className="text-sm font-medium text-slate-700 truncate">{search.query}</p>
+                              <p className="text-[10px] text-slate-400 truncate">
+                                {new Date(search.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </p>
+                            </button>
+                          </div>
+                        ))}
+                      </>
+                    )}
+
+                    {savedSearches.length === 0 && recentSearches.length === 0 && (
+                      <div className="p-8 text-center text-sm text-slate-400 italic">
+                        No saved or recent searches yet.
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+      </motion.div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-1">
@@ -2123,20 +2359,6 @@ Return a JSON object with 'status' and 'analysis'.`,
                         )}
                       </button>
                       <button 
-                        onClick={handleBatchSummarize}
-                        disabled={isBatchSummarizing}
-                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50"
-                      >
-                        {isBatchSummarizing ? (
-                          <>
-                            <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                            {processingStep || 'Summarizing...'}
-                          </>
-                        ) : (
-                          <><Zap size={16} /> Batch Summarize</>
-                        )}
-                      </button>
-                      <button 
                         onClick={() => setIsBatchEditing(true)}
                         className="flex items-center gap-2 px-4 py-2 bg-white text-slate-900 border border-slate-200 rounded-lg text-sm font-bold hover:bg-slate-50 transition-colors"
                       >
@@ -2173,7 +2395,7 @@ Return a JSON object with 'status' and 'analysis'.`,
                   </div>
                 </div>
 
-                  {(isBatchCheckingCitations || isBatchSummarizing) && (
+                  {isBatchCheckingCitations && (
                       <motion.div 
                         initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
@@ -2229,14 +2451,13 @@ Return a JSON object with 'status' and 'analysis'.`,
                     setEditAuthor={setEditAuthor}
                     setEditDatePublished={setEditDatePublished}
                     setEditKeywords={setEditKeywords}
+                    setEditType={setEditType}
                     generatingInsightId={generatingInsightId}
                     handleGenerateInsight={handleGenerateInsight}
                     setSelectedVersionDoc={setSelectedVersionDoc}
                     handlePreview={handlePreview}
-                    onSummarize={onSummarize}
                     fetchWithAuth={fetchWithAuth}
                     setActiveView={setActiveView}
-                    setSummarizerInitialData={setSummarizerInitialData}
                     showStructuredSummaryId={showStructuredSummaryId}
                     setShowStructuredSummaryId={setShowStructuredSummaryId}
                     handleExportCitationAnalysis={handleExportCitationAnalysis}
@@ -2600,9 +2821,18 @@ Return a JSON object with 'status' and 'analysis'.`,
           <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
+              animate={{ 
+                opacity: 1, 
+                scale: 1, 
+                y: 0,
+                width: isPreviewFullScreen ? '100vw' : '100%',
+                height: isPreviewFullScreen ? '100vh' : 'auto',
+                maxWidth: isPreviewFullScreen ? '100vw' : '1100px',
+                maxHeight: isPreviewFullScreen ? '100vh' : '90vh',
+                borderRadius: isPreviewFullScreen ? '0px' : '24px'
+              }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[80vh] flex flex-col overflow-hidden"
+              className={`bg-white shadow-2xl flex flex-col overflow-hidden border border-slate-200 z-50 ${isPreviewFullScreen ? 'fixed inset-0' : 'relative w-full max-w-4xl h-[90vh]'}`}
             >
               <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                 <div className="flex items-center gap-4">
@@ -2629,29 +2859,103 @@ Return a JSON object with 'status' and 'analysis'.`,
                     </p>
                   </div>
                 </div>
-                <button 
-                  onClick={() => {
-                    setPreviewDoc(null);
-                    setViewingVersion(null);
-                    setPreviewContent(null);
-                  }}
-                  className="p-2 hover:bg-slate-200 rounded-full transition-colors"
-                >
-                  <X size={24} />
-                </button>
+                <div className="flex items-center gap-2">
+                  {previewContent && (
+                    <>
+                      <div className="flex items-center bg-slate-100 rounded-xl p-1 mr-2">
+                        <button 
+                          onClick={() => setReadingMode('light')}
+                          className={`p-1.5 rounded-lg transition-all ${readingMode === 'light' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
+                          title="Light Mode"
+                        >
+                          <Sun size={16} />
+                        </button>
+                        <button 
+                          onClick={() => setReadingMode('sepia')}
+                          className={`p-1.5 rounded-lg transition-all ${readingMode === 'sepia' ? 'bg-[#f4ecd8] shadow-sm text-[#5b4636]' : 'text-slate-500 hover:text-slate-700'}`}
+                          title="Sepia Mode"
+                        >
+                          <Coffee size={16} />
+                        </button>
+                        <button 
+                          onClick={() => setReadingMode('dark')}
+                          className={`p-1.5 rounded-lg transition-all ${readingMode === 'dark' ? 'bg-slate-800 shadow-sm text-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
+                          title="Dark Mode"
+                        >
+                          <Moon size={16} />
+                        </button>
+                      </div>
+
+                      <div className="relative mr-2 hidden lg:block">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                        <input 
+                          type="text"
+                          placeholder="Search in document..."
+                          value={previewSearch}
+                          onChange={(e) => setPreviewSearch(e.target.value)}
+                          className="pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-48 transition-all"
+                        />
+                      </div>
+
+                      <button 
+                        onClick={() => handleCopy(previewContent)}
+                        className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-500"
+                        title="Copy Text"
+                      >
+                        <Copy size={20} />
+                      </button>
+                      <button 
+                        onClick={handlePrint}
+                        className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-500"
+                        title="Print Document"
+                      >
+                        <Printer size={20} />
+                      </button>
+                      <button 
+                        onClick={handleDownloadPreview}
+                        className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-500"
+                        title="Download Original"
+                      >
+                        <Download size={20} />
+                      </button>
+                    </>
+                  )}
+                  <button 
+                    onClick={() => setIsPreviewFullScreen(!isPreviewFullScreen)}
+                    className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-500"
+                    title={isPreviewFullScreen ? "Exit Full Screen" : "Full Screen"}
+                  >
+                    {isPreviewFullScreen ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setPreviewDoc(null);
+                      setViewingVersion(null);
+                      setPreviewContent(null);
+                      setPreviewSearch('');
+                      setIsPreviewFullScreen(false);
+                      setReadingMode('light');
+                    }}
+                    className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-500"
+                  >
+                    <X size={24} />
+                  </button>
+                </div>
               </div>
               
-              <div className="flex-1 overflow-y-auto p-8">
+              <div className={`flex-1 overflow-y-auto p-8 ${readingMode === 'light' ? 'bg-slate-50/30' : readingMode === 'sepia' ? 'bg-[#fdf6e3]' : 'bg-[#121212]'}`}>
                 {isPreviewLoading ? (
                   <div className="flex flex-col items-center justify-center h-64 text-slate-400">
                     <div className="w-10 h-10 border-4 border-slate-200 border-t-indigo-600 rounded-full animate-spin mb-4" />
                     <p className="font-serif italic">Loading document content...</p>
                   </div>
                 ) : previewContent ? (
-                  <div className="prose prose-slate max-w-none">
-                    <pre className="whitespace-pre-wrap font-sans text-sm text-slate-700 leading-relaxed bg-slate-50 p-6 rounded-xl border border-slate-100">
-                      {previewContent}
-                    </pre>
+                  <div className="max-w-4xl mx-auto">
+                    <div className={`p-10 rounded-2xl shadow-sm border border-slate-100 min-h-full transition-colors duration-300 ${getReadingModeClasses()}`}>
+                      <pre className={`whitespace-pre-wrap font-sans text-sm leading-relaxed ${readingMode === 'dark' ? 'text-slate-300' : readingMode === 'sepia' ? 'text-[#5b4636]' : 'text-slate-700'}`}>
+                        <HighlightedText text={previewContent} search={previewSearch} />
+                      </pre>
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-6">
@@ -2660,7 +2964,7 @@ Return a JSON object with 'status' and 'analysis'.`,
                         <ShieldAlert size={18} /> Preview Limited
                       </h4>
                       <p className="text-sm text-amber-700">
-                        Full text preview is only available for supported documents (.txt, .md, .csv, .json, .pdf, .docx). 
+                        Full text preview is only available for supported documents (.txt, .md, .csv, .json, .pdf, .docx, .doc, .xlsx, .xls). 
                         For other file types, please download the document to view its contents.
                       </p>
                     </div>
@@ -2767,19 +3071,6 @@ Return a JSON object with 'status' and 'analysis'.`,
                     {isCopied ? 'Copied!' : 'Copy to Clipboard'}
                   </button>
                 )}
-                {previewContent && (
-                  <button 
-                    onClick={() => {
-                      if (onSummarize) {
-                        onSummarize(previewContent, previewDoc.citation);
-                        setPreviewDoc(null);
-                      }
-                    }}
-                    className="px-6 py-2 bg-indigo-50 text-indigo-600 rounded-xl font-bold hover:bg-indigo-100 transition-all flex items-center gap-2"
-                  >
-                    <Zap size={18} /> AI Summarize
-                  </button>
-                )}
                 <a 
                   href={`/api/documents/download/${previewDoc.filename}`}
                   className="px-6 py-2 bg-slate-900 text-white rounded-xl font-bold shadow-lg hover:bg-slate-800 transition-all flex items-center gap-2"
@@ -2847,6 +3138,18 @@ Return a JSON object with 'status' and 'analysis'.`,
                     onChange={(e) => setEditDatePublished(e.target.value)}
                     className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900"
                   />
+                </div>
+                <div>
+                  <label className="text-xs font-mono text-slate-400 uppercase">Document Type</label>
+                  <select 
+                    value={editType}
+                    onChange={(e) => setEditType(e.target.value as any)}
+                    className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900 bg-transparent"
+                  >
+                    <option value="case">Case Law</option>
+                    <option value="statute">Statute</option>
+                    <option value="memo">Legal Memo</option>
+                  </select>
                 </div>
                 <div>
                   <label className="text-xs font-mono text-slate-400 uppercase mb-2 block">Keywords</label>
@@ -2953,6 +3256,19 @@ Return a JSON object with 'status' and 'analysis'.`,
                   />
                 </div>
                 <div>
+                  <label className="text-xs font-mono text-slate-400 uppercase">New Document Type</label>
+                  <select 
+                    value={batchEditType}
+                    onChange={(e) => setBatchEditType(e.target.value as any)}
+                    className="w-full p-2 border-b border-slate-200 focus:outline-none focus:border-slate-900 bg-transparent"
+                  >
+                    <option value="">Keep current type</option>
+                    <option value="case">Case Law</option>
+                    <option value="statute">Statute</option>
+                    <option value="memo">Legal Memo</option>
+                  </select>
+                </div>
+                <div>
                   <label className="text-xs font-mono text-slate-400 uppercase mb-2 block">New Keywords</label>
                   <TagManager 
                     tags={batchEditKeywords}
@@ -3030,7 +3346,7 @@ const ResearchAssistant = () => {
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
   const [sources, setSources] = useState<{title: string, uri: string}[]>([]);
   const [copiedIndex, setCopiedIndex] = useState<string | null>(null);
-  const [researchMode, setResearchMode] = useState<'memo' | 'statute' | 'case' | 'article' | 'summarizer' | 'autonomous'>('memo');
+  const [researchMode, setResearchMode] = useState<'memo' | 'statute' | 'case' | 'article' | 'autonomous'>('memo');
   const [history, setHistory] = useState<{query: string, timestamp: string}[]>([]);
   const [isSaving, setIsSaving] = useState<string | null>(null);
   const [savedIds, setSavedIds] = useState<string[]>([]);
@@ -3055,11 +3371,6 @@ const ResearchAssistant = () => {
       "Legal analysis of the Maharlika Investment Fund",
       "Impact of the Anti-Terror Law on civil liberties",
       "Developments in Philippine Cybercrime Law"
-    ],
-    summarizer: [
-      "Summarize Estrada vs. Desierto (G.R. No. 146710)",
-      "Provide a case brief for People vs. Genosa",
-      "Analyze the ruling in Falcis vs. Civil Registrar General"
     ],
     autonomous: [
       "Conduct a full research on the liability of online platforms for user-generated content in the PH",
@@ -3095,7 +3406,6 @@ const ResearchAssistant = () => {
       statute: ["Searching Statutes...", "Identifying Relevant Articles...", "Checking Amendments...", "Cross-referencing Laws...", "Finalizing Citations..."],
       case: ["Searching Jurisprudence...", "Identifying Key Rulings...", "Analyzing Precedents...", "Checking Case Status...", "Finalizing Citations..."],
       article: ["Searching Legal Journals...", "Retrieving Scholarly Articles...", "Analyzing Legal Commentary...", "Synthesizing Perspectives...", "Finalizing References..."],
-      summarizer: ["Reading Case Text...", "Identifying Facts...", "Extracting Issues...", "Analyzing Ruling...", "Synthesizing Legal Analysis..."],
       autonomous: ["Initializing Autonomous Agent...", "Decomposing Research Goal...", "Searching Jurisprudence...", "Analyzing Statutes...", "Cross-referencing Precedents...", "Synthesizing Multi-step Analysis...", "Finalizing Comprehensive Report..."]
     };
 
@@ -3168,17 +3478,6 @@ const ResearchAssistant = () => {
         - Synthesize different legal perspectives and academic theories on the topic.
         - Reference reputable legal journals (e.g., Philippine Law Journal, Ateneo Law Journal).
         - Analyze the evolution of legal thought on the subject.`;
-      } else if (researchMode === 'summarizer') {
-        systemPrompt += `
-        ROLE: Case Summarizer.
-        TASK: Provide a highly structured and precise summary of a case text or citation.
-        STRUCTURE:
-        1. CASE TITLE & CITATION: Full title and G.R. Number.
-        2. FACTS: A concise narrative of the essential events.
-        3. ISSUES: The core legal questions addressed by the Court.
-        4. RULING: The Court's decision and the underlying legal reasoning.
-        5. DOCTRINE: The specific legal principle or "black letter law" established.
-        6. IMPLICATIONS: Brief analysis of how this affects Philippine jurisprudence.`;
       } else if (researchMode === 'autonomous') {
         systemPrompt += `
         ROLE: Autonomous Legal Research Agent.
@@ -3323,12 +3622,6 @@ const ResearchAssistant = () => {
               Articles
             </button>
             <button 
-              onClick={() => setResearchMode('summarizer')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${researchMode === 'summarizer' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-            >
-              Summarizer
-            </button>
-            <button 
               onClick={() => setResearchMode('autonomous')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${researchMode === 'autonomous' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
@@ -3351,7 +3644,7 @@ const ResearchAssistant = () => {
             </div>
             <div className="text-center max-w-md space-y-4">
               <h2 className="text-xl font-serif text-slate-600">How can I assist your research?</h2>
-              <p className="text-sm leading-relaxed">Describe a legal problem, ask for specific jurisprudence, or provide a case for summarization. I will analyze issues, search laws, and generate structured summaries.</p>
+              <p className="text-sm leading-relaxed">Describe a legal problem or ask for specific jurisprudence. I will analyze issues, search laws, and generate structured legal analysis.</p>
               
               <div className="pt-4">
                 <p className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-3">Suggested Topics</p>
@@ -3504,11 +3797,7 @@ const ResearchAssistant = () => {
                 handleSend();
               }
             }}
-            placeholder={
-              researchMode === 'summarizer' 
-                ? "Paste case text or provide a citation (e.g., 'Estrada vs. Desierto, G.R. No. 146710')..." 
-                : "Describe your legal research problem..."
-            }
+            placeholder="Describe your legal research problem..."
             className="w-full p-5 pr-16 bg-white border border-slate-200 rounded-2xl focus:outline-none focus:border-indigo-500 transition-all shadow-lg min-h-[64px] max-h-[300px] resize-none"
             rows={1}
             style={{ height: 'auto' }}
@@ -4002,371 +4291,13 @@ const StatuteSearch = () => {
   );
 };
 
-const CaseSummarizer = ({ 
-  initialText, 
-  initialCitation,
-  onClear
-}: { 
-  initialText?: string, 
-  initialCitation?: string,
-  onClear?: () => void
-}) => {
-  const { fetchWithAuth } = useAuth();
-  const [caseText, setCaseText] = useState(initialText || '');
-  const [citationInput, setCitationInput] = useState(initialCitation || '');
-  const [summary, setSummary] = useState<CaseSummary | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [searchMode, setSearchMode] = useState(false);
-
-  const sampleCase = `G.R. No. 135981. January 15, 2004.
-PEOPLE OF THE PHILIPPINES, appellee, vs. MARIVIC GENOSA, appellant.
-
-DECISION
-PANGANIBAN, J.:
-
-The battered woman syndrome is a scientifically recognized medical and psychological condition that affects women who have been subjected to a pattern of physical, sexual, or psychological abuse by their intimate partners. It is characterized by a cycle of violence, where periods of relative calm are followed by escalating tension and eventually an acute battering incident.
-
-In the present case, the appellant, Marivic Genosa, was charged with parricide for killing her husband, Ben Genosa. She admitted to the killing but claimed self-defense, alleging that she was a victim of battered woman syndrome.
-
-The trial court convicted her of parricide and sentenced her to death. On appeal, the Supreme Court recognized the existence of battered woman syndrome in the Philippines but ruled that the appellant failed to prove all the elements of self-defense. However, the Court appreciated the syndrome as a mitigating circumstance, analogous to passion or obfuscation, and reduced her sentence.`;
-
-  const handleSummarize = useCallback(async (useSearch = false) => {
-    if (!caseText.trim() && !citationInput.trim()) return;
-    setLoading(true);
-    setSearchMode(useSearch);
-    setSummary(null);
-
-    if (!process.env.GEMINI_API_KEY) {
-      alert("API Key not found. Please add your GEMINI_API_KEY in the Settings > Secrets menu.");
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      
-      let prompt = "";
-      let config: any = {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING, description: "The full title of the case (e.g., People vs. Juan Dela Cruz)" },
-            citation: { type: Type.STRING, description: "The Case Citation (e.g., G.R. No. 123456 and date of the decision)" },
-            facts: { type: Type.STRING, description: "A concise summary of the material facts of the case" },
-            issues: { type: Type.STRING, description: "The legal issues addressed by the court" },
-            ruling: { type: Type.STRING, description: "The court's ruling and ratio decidendi" },
-            analysis: { type: Type.STRING, description: "A brief analysis of the case, highlighting key legal principles and implications" },
-          },
-          required: ["title", "citation", "facts", "issues", "ruling", "analysis"]
-        }
-      };
-
-      if (useSearch) {
-        prompt = `Search for the full text of the Philippine Supreme Court case: ${citationInput}. 
-        Once found, provide a comprehensive legal summary tailored for Philippine legal practice. 
-        Extract the following:
-        1. Case Title
-        2. Case Citation (G.R. Number and Date)
-        3. Facts (Concise but complete narrative of the dispute)
-        4. Issues (The specific legal questions resolved by the Court)
-        5. Ruling (The Court's decision and the ratio decidendi)
-        6. Legal Analysis (The specific doctrine or legal principle established, and its implications for Philippine jurisprudence).`;
-        config.tools = [{ googleSearch: {} }];
-        config.thinkingConfig = { thinkingLevel: ThinkingLevel.HIGH };
-      } else {
-        prompt = `Please provide a detailed legal summary of the following Philippine Supreme Court decision. 
-        Extract the Case Title, Case Citation (G.R. Number), Facts, Issues, Ruling, and a brief Legal Analysis highlighting the specific doctrine or legal principle established by the Court and its implications for Philippine jurisprudence.
-        
-        Case Text: ${caseText}`;
-      }
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
-        config: config
-      });
-      
-      if (response.text) {
-        setSummary(JSON.parse(response.text));
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-      setSearchMode(false);
-    }
-  }, [caseText, citationInput]);
-
-  useEffect(() => {
-    if (initialText) {
-      setCaseText(initialText);
-      // Auto-summarize if text is provided from library
-      if (!summary && !loading) {
-        handleSummarize();
-      }
-    }
-    if (initialCitation) setCitationInput(initialCitation);
-  }, [initialText, initialCitation, handleSummarize]);
-
-  const saveToLibrary = async () => {
-    if (!summary) return;
-    setLoading(true);
-    try {
-      const res = await fetchWithAuth('/api/documents/save-summary', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: summary.title,
-          citation: citationInput || summary.citation,
-          summary: summary.facts.substring(0, 200) + '...',
-          facts: summary.facts,
-          issues: summary.issues,
-          ruling: summary.ruling,
-          analysis: summary.analysis,
-          tags: 'ai-generated,summary'
-        })
-      });
-      if (res.ok) {
-        alert("Summary saved to Document Library successfully!");
-      } else {
-        alert("Failed to save summary.");
-      }
-    } catch (err) {
-      console.error(err);
-      alert("An error occurred while saving.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const exportSummary = () => {
-    if (!summary) return;
-    const content = `
-# Case Summary: ${summary.title}
-**Citation:** ${citationInput || summary.citation}
-
-## Facts
-${summary.facts}
-
-## Issues
-${summary.issues}
-
-## Ruling
-${summary.ruling}
-
-## Legal Analysis
-${summary.analysis}
-
----
-Generated by LexPH AI Case Summarizer
-    `;
-    const blob = new Blob([content], { type: 'text/markdown' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${summary.title.replace(/[^a-z0-9]/gi, '_')}_Summary.md`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  return (
-    <div className="space-y-6">
-      <header className="flex justify-between items-end">
-        <div>
-          <h1 className="text-3xl font-serif font-bold text-slate-900">AI Case Summarizer</h1>
-          <p className="text-slate-500">Transform lengthy Supreme Court decisions into structured legal summaries.</p>
-        </div>
-        <button 
-          onClick={() => setCaseText(sampleCase)}
-          className="text-xs font-mono text-indigo-600 hover:text-indigo-800 flex items-center gap-1 px-3 py-1.5 bg-indigo-50 rounded-lg border border-indigo-100 transition-all"
-        >
-          <Zap size={14} /> LOAD SAMPLE CASE
-        </button>
-      </header>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="space-y-6">
-          <div className="legal-card p-6">
-            <h3 className="text-lg font-serif font-bold mb-4 flex items-center gap-2">
-              <FileText size={20} className="text-slate-900" /> Case Details
-            </h3>
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs font-mono text-slate-400 uppercase tracking-widest mb-1 block">Case Citation (Optional)</label>
-                <input 
-                  type="text" 
-                  value={citationInput}
-                  onChange={(e) => setCitationInput(e.target.value)}
-                  placeholder="e.g., G.R. No. 123456"
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/5 transition-all text-sm"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-mono text-slate-400 uppercase tracking-widest mb-1 block">Case Document Text</label>
-                <textarea 
-                  value={caseText}
-                  onChange={(e) => setCaseText(e.target.value)}
-                  placeholder="Paste the full text of the Supreme Court decision here..."
-                  className="w-full h-[500px] p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900/5 transition-all text-sm resize-none"
-                />
-              </div>
-            </div>
-            <div className="flex flex-col gap-3 mt-4">
-              <div className="flex gap-3">
-                <button 
-                  onClick={() => handleSummarize(false)}
-                  disabled={loading || !caseText.trim()}
-                  className="flex-1 py-3 bg-slate-900 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-slate-800 transition-colors disabled:opacity-50"
-                >
-                  {loading && !searchMode ? <Zap className="animate-spin" size={20} /> : <BookOpen size={20} />}
-                  {loading && !searchMode ? 'Summarizing...' : 'Summarize Text'}
-                </button>
-                <button 
-                  onClick={() => handleSummarize(true)}
-                  disabled={loading || !citationInput.trim()}
-                  className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-700 transition-colors disabled:opacity-50"
-                >
-                  {loading && searchMode ? <Zap className="animate-spin" size={20} /> : <Search size={20} />}
-                  {loading && searchMode ? 'Searching...' : 'Search & Summarize'}
-                </button>
-              </div>
-              <button 
-                onClick={() => { 
-                  setCaseText(''); 
-                  setCitationInput(''); 
-                  setSummary(null); 
-                  if (onClear) onClear();
-                }}
-                className="w-full py-3 border border-slate-200 text-slate-600 rounded-xl font-medium hover:bg-slate-50 transition-colors"
-              >
-                Clear All
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-6">
-          <div className="legal-card p-8 min-h-[700px] bg-white relative overflow-hidden">
-            {!summary && !loading && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-300 p-12 text-center">
-                <Gavel size={80} strokeWidth={1} className="mb-4 opacity-20" />
-                <p className="text-lg font-serif italic">The structured AI summary will appear here once the decision text is processed.</p>
-              </div>
-            )}
-
-            {loading && (
-              <div className="space-y-8 animate-pulse">
-                <div className="h-10 bg-slate-100 rounded w-3/4" />
-                <div className="h-4 bg-slate-100 rounded w-1/4" />
-                <div className="space-y-4">
-                  <div className="h-6 bg-slate-50 rounded w-1/3" />
-                  <div className="h-24 bg-slate-50 rounded w-full" />
-                </div>
-                <div className="space-y-4">
-                  <div className="h-6 bg-slate-50 rounded w-1/3" />
-                  <div className="h-24 bg-slate-50 rounded w-full" />
-                </div>
-              </div>
-            )}
-
-            {summary && (
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="space-y-8"
-              >
-                <div className="flex justify-between items-start pb-6 border-b border-slate-100">
-                  <div className="space-y-2">
-                    <h2 className="text-2xl font-serif font-bold text-slate-900 leading-tight">Case Summary</h2>
-                    <p className="text-xs font-mono text-slate-400 uppercase tracking-widest">Philippine Supreme Court Decision</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button 
-                      onClick={saveToLibrary}
-                      disabled={loading}
-                      className="text-xs font-mono text-indigo-600 hover:text-indigo-800 flex items-center gap-1 shrink-0 px-3 py-1.5 border border-indigo-100 rounded-lg hover:bg-indigo-50 transition-all"
-                    >
-                      <Save size={14} /> SAVE TO LIBRARY
-                    </button>
-                    <button 
-                      onClick={exportSummary}
-                      className="text-xs font-mono text-slate-400 hover:text-slate-900 flex items-center gap-1 shrink-0 px-3 py-1.5 border border-slate-100 rounded-lg hover:bg-slate-50 transition-all"
-                    >
-                      <Download size={14} /> EXPORT MD
-                    </button>
-                  </div>
-                </div>
-
-                <div className="space-y-6">
-                  <section>
-                    <h3 className="text-xs font-mono text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                      <span className="w-1 h-4 bg-slate-900 rounded-full" /> Case Title
-                    </h3>
-                    <div className="text-slate-900 font-bold text-lg font-serif bg-slate-50/50 p-4 rounded-xl border border-slate-100/50 leading-tight">
-                      {summary.title}
-                    </div>
-                  </section>
-
-                  <section>
-                    <h3 className="text-xs font-mono text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                      <span className="w-1 h-4 bg-slate-900 rounded-full" /> Case Citation
-                    </h3>
-                    <div className="text-slate-900 font-bold text-sm bg-slate-50/50 p-4 rounded-xl border border-slate-100/50">
-                      {citationInput || summary.citation}
-                    </div>
-                  </section>
-
-                  <section>
-                    <h3 className="text-xs font-mono text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                      <span className="w-1 h-4 bg-slate-900 rounded-full" /> Facts
-                    </h3>
-                    <div className="text-slate-700 leading-relaxed text-sm bg-slate-50/50 p-4 rounded-xl border border-slate-100/50">
-                      <Markdown>{summary.facts}</Markdown>
-                    </div>
-                  </section>
-
-                  <section>
-                    <h3 className="text-xs font-mono text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                      <span className="w-1 h-4 bg-slate-900 rounded-full" /> Issues
-                    </h3>
-                    <div className="text-slate-700 leading-relaxed text-sm bg-slate-50/50 p-4 rounded-xl border border-slate-100/50">
-                      <Markdown>{summary.issues}</Markdown>
-                    </div>
-                  </section>
-
-                  <section>
-                    <h3 className="text-xs font-mono text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                      <span className="w-1 h-4 bg-slate-900 rounded-full" /> Ruling
-                    </h3>
-                    <div className="text-slate-900 leading-relaxed text-sm font-medium bg-slate-900/5 p-4 rounded-xl border border-slate-900/10">
-                      <Markdown>{summary.ruling}</Markdown>
-                    </div>
-                  </section>
-
-                  <section>
-                    <h3 className="text-xs font-mono text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                      <span className="w-1 h-4 bg-indigo-600 rounded-full" /> Legal Analysis
-                    </h3>
-                    <div className="text-slate-700 leading-relaxed text-sm bg-indigo-50/30 p-4 rounded-xl border border-indigo-100/50 italic">
-                      <Markdown>{summary.analysis}</Markdown>
-                    </div>
-                  </section>
-                </div>
-              </motion.div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 const WorkflowCenter = () => {
+  const { fetchWithAuth } = useAuth();
+  const { documents } = useDocumentStore();
   const [activeWorkflow, setActiveWorkflow] = useState<string | null>(null);
   const [input, setInput] = useState('');
+  const [selectedDocIds, setSelectedDocIds] = useState<number[]>([]);
+  const [isSelectorOpen, setIsSelectorOpen] = useState(false);
   const [logs, setLogs] = useState<{ message: string; type: 'info' | 'success' | 'error' | 'agent' }[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [result, setResult] = useState<string | null>(null);
@@ -4395,6 +4326,14 @@ const WorkflowCenter = () => {
       icon: FileText,
       color: 'text-amber-600',
       bg: 'bg-amber-50',
+    },
+    {
+      id: 'legal-research',
+      title: 'Custom Legal Research',
+      description: 'Synthesize a research memo based on selected documents and a query.',
+      icon: Search,
+      color: 'text-indigo-600',
+      bg: 'bg-indigo-50',
     }
   ];
 
@@ -4421,11 +4360,35 @@ const WorkflowCenter = () => {
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       
+      // Fetch contents of selected documents
+      let contextContent = "";
+      if (selectedDocIds.length > 0) {
+        addLog(`Fetching content for ${selectedDocIds.length} selected documents...`, 'info');
+        for (const id of selectedDocIds) {
+          const doc = documents.find(d => d.id === id);
+          if (doc) {
+            try {
+              const res = await fetchWithAuth(`/api/documents/preview/${doc.filename}`);
+              const data = await res.json();
+              if (data.content) {
+                contextContent += `\n\n--- DOCUMENT: ${doc.title} ---\n${data.content.substring(0, 10000)}`;
+              }
+            } catch (err) {
+              addLog(`Failed to fetch content for ${doc.title}`, 'error');
+            }
+          }
+        }
+        addLog("Document context loaded.", 'success');
+      }
+
       if (activeWorkflow === 'case-analysis') {
         addLog("Agent: Analyzing material facts and identifying legal issues...", 'agent');
         const analysisResponse = await ai.models.generateContent({
           model: "gemini-3-flash-preview",
-          contents: `Analyze the following case facts and identify the key legal issues and applicable laws in the Philippines: ${input}`,
+          contents: `Analyze the following case facts and identify the key legal issues and applicable laws in the Philippines. 
+          ${contextContent ? `Use the following documents as additional context: ${contextContent}` : ''}
+          
+          Facts: ${input}`,
           config: { thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH } }
         });
         addLog("Facts analyzed and issues identified.", 'success');
@@ -4472,7 +4435,8 @@ const WorkflowCenter = () => {
         addLog("Agent: Identifying applicable statutes and regulations...", 'agent');
         const statutesResponse = await ai.models.generateContent({
           model: "gemini-3-flash-preview",
-          contents: `Identify all relevant Philippine statutes, executive orders, and administrative regulations applicable to this scenario: ${input}`,
+          contents: `Identify all relevant Philippine statutes, executive orders, and administrative regulations applicable to this scenario: ${input}
+          ${contextContent ? `Consider these documents as context: ${contextContent}` : ''}`,
           config: { tools: [{ googleSearch: {} }] }
         });
         addLog("Applicable laws identified.", 'success');
@@ -4503,7 +4467,8 @@ const WorkflowCenter = () => {
         addLog("Agent: Parsing contract clauses and identifying key terms...", 'agent');
         const parsingResponse = await ai.models.generateContent({
           model: "gemini-3-flash-preview",
-          contents: `Parse the following contract text and identify key terms, obligations, and termination clauses: ${input}`,
+          contents: `Parse the following contract text and identify key terms, obligations, and termination clauses: ${input}
+          ${contextContent ? `Use these related documents for context: ${contextContent}` : ''}`,
         });
         addLog("Contract parsed.", 'success');
         
@@ -4528,6 +4493,41 @@ const WorkflowCenter = () => {
         });
         
         setResult(reviewSummary.text || "Workflow completed with no output.");
+      } else if (activeWorkflow === 'legal-research') {
+        addLog("Agent: Conducting deep legal research based on query and context...", 'agent');
+        const researchResponse = await ai.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: `Conduct comprehensive legal research on the following query: ${input}
+          
+          ${contextContent ? `Use the following documents as primary context and sources: ${contextContent}` : ''}
+          
+          Identify relevant Philippine laws, Supreme Court decisions, and legal doctrines.`,
+          config: { 
+            tools: [{ googleSearch: {} }],
+            thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH }
+          }
+        });
+        addLog("Research completed.", 'success');
+
+        addLog("Agent: Synthesizing research findings into a formal memo...", 'agent');
+        const finalMemo = await ai.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: `Synthesize the following research findings into a formal, structured legal research memorandum.
+          
+          Query: ${input}
+          Findings: ${researchResponse.text}
+          
+          The memo should include:
+          - Executive Summary
+          - Legal Issues
+          - Discussion of Laws and Jurisprudence
+          - Conclusion and Recommendations
+          
+          Cite all sources properly.`,
+          config: { thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH } }
+        });
+        
+        setResult(finalMemo.text || "Workflow completed with no output.");
       }
 
       addLog("Workflow completed successfully.", 'success');
@@ -4578,7 +4578,32 @@ const WorkflowCenter = () => {
               animate={{ opacity: 1, y: 0 }}
               className="legal-card p-6"
             >
-              <h4 className="text-xs font-mono text-slate-400 uppercase tracking-widest mb-4">Workflow Input</h4>
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="text-xs font-mono text-slate-400 uppercase tracking-widest">Workflow Input</h4>
+                <button 
+                  onClick={() => setIsSelectorOpen(true)}
+                  className="text-[10px] font-bold text-indigo-600 hover:underline flex items-center gap-1"
+                >
+                  <Plus size={12} /> {selectedDocIds.length > 0 ? `${selectedDocIds.length} Docs Selected` : 'Select Context Docs'}
+                </button>
+              </div>
+              
+              {selectedDocIds.length > 0 && (
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {selectedDocIds.map(id => {
+                    const doc = documents.find(d => d.id === id);
+                    return (
+                      <div key={id} className="flex items-center gap-1 px-2 py-1 bg-indigo-50 text-indigo-700 rounded-md text-[10px] font-medium border border-indigo-100">
+                        <span className="truncate max-w-[100px]">{doc?.title}</span>
+                        <button onClick={() => setSelectedDocIds(prev => prev.filter(i => i !== id))}>
+                          <X size={10} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
               <textarea 
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -4609,69 +4634,201 @@ const WorkflowCenter = () => {
             {(activeWorkflow || isRunning) && (
               <div className="flex-1 flex flex-col">
                 <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-100">
-                  <h3 className="text-lg font-serif font-bold text-slate-900">Agent Execution Logs</h3>
-                  {isRunning && (
-                    <div className="flex items-center gap-2 px-3 py-1 bg-indigo-50 text-indigo-600 rounded-full text-[10px] font-bold border border-indigo-100">
-                      <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse" />
-                      LIVE EXECUTION
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-slate-900 text-white rounded-lg">
+                      <Terminal size={18} />
                     </div>
-                  )}
+                    <h3 className="text-lg font-serif font-bold text-slate-900">Agent Execution Logs</h3>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {isRunning && (
+                      <div className="flex items-center gap-2 px-3 py-1 bg-indigo-50 text-indigo-600 rounded-full text-[10px] font-bold border border-indigo-100">
+                        <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse" />
+                        LIVE EXECUTION
+                      </div>
+                    )}
+                    <button 
+                      onClick={() => setLogs([])}
+                      className="p-2 text-slate-400 hover:text-slate-600 transition-colors"
+                      title="Clear Logs"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                 </div>
 
-                <div className="flex-1 space-y-3 font-mono text-xs overflow-y-auto max-h-[300px] mb-8 p-4 bg-slate-50 rounded-xl border border-slate-100">
-                  {logs.length === 0 && <p className="text-slate-400 italic">Waiting for execution...</p>}
+                <div className="flex-1 space-y-3 font-mono text-[11px] overflow-y-auto max-h-[300px] mb-8 p-6 bg-slate-950 text-slate-300 rounded-2xl border border-slate-800 shadow-inner custom-scrollbar">
+                  {logs.length === 0 && <p className="text-slate-600 italic">Waiting for execution sequence...</p>}
                   {logs.map((log, i) => (
-                    <div key={i} className={`flex gap-3 ${
-                      log.type === 'error' ? 'text-red-600' : 
-                      log.type === 'success' ? 'text-emerald-600' : 
-                      log.type === 'agent' ? 'text-indigo-600 font-bold' : 
-                      'text-slate-500'
+                    <div key={i} className={`flex gap-3 leading-relaxed ${
+                      log.type === 'error' ? 'text-red-400' : 
+                      log.type === 'success' ? 'text-emerald-400' : 
+                      log.type === 'agent' ? 'text-indigo-400 font-bold' : 
+                      'text-slate-400'
                     }`}>
-                      <span className="opacity-30">[{new Date().toLocaleTimeString([], { hour12: false })}]</span>
-                      <span>{log.message}</span>
+                      <span className="opacity-40 select-none">[{new Date().toLocaleTimeString([], { hour12: false })}]</span>
+                      <span className="flex-1">{log.message}</span>
                     </div>
                   ))}
                   {isRunning && (
-                    <div className="flex gap-1 mt-2">
-                      <div className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce" />
-                      <div className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.2s]" />
-                      <div className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.4s]" />
+                    <div className="flex gap-1.5 mt-3 pl-16">
+                      <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce" />
+                      <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:0.2s]" />
+                      <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:0.4s]" />
                     </div>
                   )}
                 </div>
 
                 {result && (
                   <motion.div 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
                     className="flex-1 border-t border-slate-100 pt-6"
                   >
                     <div className="flex items-center justify-between mb-4">
-                      <h4 className="text-xs font-mono text-slate-400 uppercase tracking-widest">Workflow Result</h4>
-                      <button 
-                        onClick={() => {
-                          const blob = new Blob([result], { type: 'text/markdown' });
-                          const url = URL.createObjectURL(blob);
-                          const a = document.createElement('a');
-                          a.href = url;
-                          a.download = `LexPH_Workflow_Result_${new Date().getTime()}.md`;
-                          a.click();
-                        }}
-                        className="text-[10px] font-bold text-indigo-600 hover:underline flex items-center gap-1"
-                      >
-                        <Download size={12} /> DOWNLOAD MD
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <FileText size={14} className="text-slate-400" />
+                        <h4 className="text-xs font-mono text-slate-400 uppercase tracking-widest">Workflow Result</h4>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button 
+                          onClick={() => {
+                            navigator.clipboard.writeText(result);
+                            alert('Result copied to clipboard!');
+                          }}
+                          className="text-[10px] font-bold text-slate-500 hover:text-indigo-600 flex items-center gap-1 transition-colors"
+                        >
+                          <Copy size={12} /> COPY
+                        </button>
+                        <button 
+                          onClick={() => {
+                            const blob = new Blob([result], { type: 'text/markdown' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `LexPH_Workflow_Result_${new Date().getTime()}.md`;
+                            a.click();
+                          }}
+                          className="text-[10px] font-bold text-indigo-600 hover:underline flex items-center gap-1"
+                        >
+                          <Download size={12} /> DOWNLOAD MD
+                        </button>
+                        <button 
+                          onClick={() => setResult(null)}
+                          className="p-1 text-slate-300 hover:text-red-500 transition-colors"
+                          title="Clear Result"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
                     </div>
-                    <div className="markdown-body prose prose-slate max-w-none text-sm bg-slate-50/50 p-6 rounded-2xl border border-slate-100">
+                    <div className="markdown-body prose prose-slate max-w-none text-sm bg-slate-50/50 p-8 rounded-3xl border border-slate-100 shadow-sm">
                       <Markdown>{result}</Markdown>
                     </div>
                   </motion.div>
                 )}
               </div>
             )}
+            
+            {/* Status Bar */}
+            <div className="mt-auto pt-4 border-t border-slate-100 flex items-center justify-between text-[10px] font-mono text-slate-400">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-1.5">
+                  <div className={`w-1.5 h-1.5 rounded-full ${isRunning ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`} />
+                  <span>SYSTEM: {isRunning ? 'BUSY' : 'IDLE'}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Activity size={10} />
+                  <span>ENGINE: GEMINI-3-FLASH</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <ShieldCheck size={10} />
+                  <span>SECURE SESSION</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-4">
+                <span>LATENCY: {isRunning ? 'CALCULATING...' : '0ms'}</span>
+                <span>REGION: ASIA-SOUTHEAST1</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Document Selector Modal */}
+      <AnimatePresence>
+        {isSelectorOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[80vh]"
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div>
+                  <h3 className="text-xl font-serif font-bold text-slate-900">Select Context Documents</h3>
+                  <p className="text-xs text-slate-500">Choose documents from your library to provide context for the agent.</p>
+                </div>
+                <button onClick={() => setIsSelectorOpen(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-6 space-y-2">
+                {documents.length === 0 ? (
+                  <div className="text-center py-12 text-slate-400">
+                    <FileText size={48} className="mx-auto mb-4 opacity-20" />
+                    <p>No documents found in your library.</p>
+                  </div>
+                ) : (
+                  documents.map(doc => (
+                    <div 
+                      key={doc.id}
+                      onClick={() => {
+                        setSelectedDocIds(prev => 
+                          prev.includes(doc.id) ? prev.filter(id => id !== doc.id) : [...prev, doc.id]
+                        );
+                      }}
+                      className={`flex items-center gap-4 p-4 rounded-2xl border-2 cursor-pointer transition-all ${
+                        selectedDocIds.includes(doc.id) 
+                          ? 'border-indigo-500 bg-indigo-50/50' 
+                          : 'border-slate-100 hover:border-slate-200 bg-white'
+                      }`}
+                    >
+                      <div className={`p-2 rounded-lg ${
+                        doc.type === 'case' ? 'bg-blue-100 text-blue-600' :
+                        doc.type === 'statute' ? 'bg-emerald-100 text-emerald-600' :
+                        'bg-amber-100 text-amber-600'
+                      }`}>
+                        <FileText size={18} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-bold text-slate-900 truncate">{doc.title}</div>
+                        <div className="text-[10px] text-slate-500 truncate">{doc.citation || 'No citation'}</div>
+                      </div>
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                        selectedDocIds.includes(doc.id) ? 'bg-indigo-600 border-indigo-600' : 'border-slate-200'
+                      }`}>
+                        {selectedDocIds.includes(doc.id) && <Check size={12} className="text-white" />}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+              
+              <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex justify-end">
+                <button 
+                  onClick={() => setIsSelectorOpen(false)}
+                  className="px-8 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition-all"
+                >
+                  Done ({selectedDocIds.length})
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
@@ -5329,10 +5486,57 @@ const KnowledgeBase = ({ showConfirm }: { showConfirm: (title: string, message: 
 
 
 export default function App() {
-  const { profile, loading: authLoading, isAdmin, fetchWithAuth, refreshProfile } = useAuth();
+  const { user, profile, loading: authLoading, isAdmin, fetchWithAuth, refreshProfile } = useAuth();
   const [activeView, setActiveView] = useState<ViewType>('dashboard');
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
-  const [summarizerInitialData, setSummarizerInitialData] = useState<{text: string, citation?: string} | null>(null);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+
+  const [profileForm, setProfileForm] = useState({
+    displayName: profile?.displayName || user?.displayName || '',
+    rollNumber: profile?.rollNumber || '',
+    specialization: profile?.specialization || 'General Practice'
+  });
+
+  useEffect(() => {
+    if (profile) {
+      setProfileForm({
+        displayName: profile.displayName || user?.displayName || '',
+        rollNumber: profile.rollNumber || '',
+        specialization: profile.specialization || 'General Practice'
+      });
+    } else if (user) {
+      setProfileForm(prev => ({
+        ...prev,
+        displayName: user.displayName || '',
+      }));
+    }
+  }, [profile, user]);
+
+  const handleSaveProfile = async () => {
+    setIsSavingProfile(true);
+    try {
+      const res = await fetchWithAuth('/api/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...profileForm,
+          privacyConsent: profile?.privacyConsent || false
+        })
+      });
+      if (res.ok) {
+        await refreshProfile();
+        alert("Profile updated successfully!");
+      } else {
+        const errorData = await res.json();
+        alert(`Failed to update profile: ${errorData.error || res.statusText}`);
+      }
+    } catch (error) {
+      console.error("Profile update error:", error);
+      alert("An error occurred while updating your profile.");
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
 
   const [confirmModal, setConfirmModal] = useState<{
     show: boolean;
@@ -5396,20 +5600,11 @@ export default function App() {
     testConnection();
   }, []);
 
-  const handleSummarizeFromLibrary = useCallback((text: string, citation?: string) => {
-    setSummarizerInitialData({ text, citation });
-    setActiveView('summarizer');
-  }, []);
-
   if (authLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-zinc-50">
-        <div className="w-12 h-12 border-4 border-zinc-200 border-t-zinc-900 rounded-full animate-spin" />
-      </div>
-    );
+    return <SplashScreen />;
   }
 
-  if (!profile) {
+  if (!user) {
     return (
       <ErrorBoundary>
         <AuthScreen />
@@ -5447,12 +5642,6 @@ export default function App() {
             label="Legal Research" 
             active={activeView === 'research'} 
             onClick={() => setActiveView('research')} 
-          />
-          <SidebarItem 
-            icon={FileText} 
-            label="Case Summarizer" 
-            active={activeView === 'summarizer'} 
-            onClick={() => setActiveView('summarizer')} 
           />
           <SidebarItem 
             icon={Book} 
@@ -5504,11 +5693,17 @@ export default function App() {
           <div className="pt-4 mt-4 border-t border-slate-50">
             <div className="flex items-center gap-3 px-4 py-3 mb-2">
               <div className="w-8 h-8 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-bold">
-                {profile?.displayName?.charAt(0)}
+                {(profile?.displayName || user?.displayName || '?').charAt(0)}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-slate-900 truncate">{profile?.displayName}</p>
-                <p className="text-[10px] text-slate-500 truncate">{profile?.email}</p>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-bold text-slate-900 truncate">{profile?.displayName || user?.displayName || 'LexPH User'}</p>
+                </div>
+                {isAdmin && profile?.lastLoginAt && (
+                  <p className="text-[9px] text-indigo-600 font-mono mt-0.5">
+                    LAST LOGIN: {new Date(profile.lastLoginAt.seconds ? profile.lastLoginAt.seconds * 1000 : profile.lastLoginAt).toLocaleString()}
+                  </p>
+                )}
               </div>
             </div>
             <button 
@@ -5542,21 +5737,12 @@ export default function App() {
             )}
             {activeView === 'jurisprudence' && <JurisprudenceBrowser />}
             {activeView === 'research' && <ResearchAssistant />}
-            {activeView === 'summarizer' && (
-              <CaseSummarizer 
-                initialText={summarizerInitialData?.text} 
-                initialCitation={summarizerInitialData?.citation}
-                onClear={() => setSummarizerInitialData(null)}
-              />
-            )}
             {activeView === 'statutes' && <StatuteSearch />}
             {activeView === 'analytics' && <PredictiveAnalytics />}
             {activeView === 'knowledge' && <KnowledgeBase showConfirm={showConfirm} />}
             {activeView === 'admin' && <AdminDashboard />}
             {activeView === 'library' && (
               <DocumentLibrary 
-                onSummarize={handleSummarizeFromLibrary} 
-                setSummarizerInitialData={setSummarizerInitialData}
                 setActiveView={setActiveView}
                 showConfirm={showConfirm}
               />
@@ -5566,6 +5752,64 @@ export default function App() {
               <div className="max-w-2xl">
                 <h1 className="text-3xl font-serif font-bold text-slate-900 mb-6">Settings</h1>
                 <div className="space-y-6">
+                  <div className="legal-card p-6">
+                    <h3 className="font-bold mb-4 flex items-center gap-2">
+                      <User size={20} className="text-indigo-600" />
+                      Professional Profile
+                    </h3>
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 block">Full Name</label>
+                          <input 
+                            type="text"
+                            value={profileForm.displayName}
+                            onChange={e => setProfileForm({...profileForm, displayName: e.target.value})}
+                            className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                            placeholder="Atty. Juan Dela Cruz"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 block">Roll Number</label>
+                          <input 
+                            type="text"
+                            value={profileForm.rollNumber}
+                            onChange={e => setProfileForm({...profileForm, rollNumber: e.target.value})}
+                            className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                            placeholder="e.g. 12345"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 block">Primary Specialization</label>
+                        <select 
+                          value={profileForm.specialization}
+                          onChange={e => setProfileForm({...profileForm, specialization: e.target.value})}
+                          className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none appearance-none"
+                        >
+                          <option>General Practice</option>
+                          <option>Civil Litigation</option>
+                          <option>Criminal Law</option>
+                          <option>Labor & Employment</option>
+                          <option>Corporate Law</option>
+                          <option>Taxation</option>
+                          <option>Family Law</option>
+                          <option>Intellectual Property</option>
+                        </select>
+                      </div>
+                      <div className="flex justify-end pt-2">
+                        <button 
+                          onClick={handleSaveProfile}
+                          disabled={isSavingProfile}
+                          className="px-6 py-2 bg-slate-900 text-white text-xs font-bold rounded-lg hover:bg-slate-800 transition-all disabled:opacity-50 flex items-center gap-2"
+                        >
+                          {isSavingProfile ? <RotateCcw size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                          Save Profile Changes
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="legal-card p-6">
                     <h3 className="font-bold mb-4 flex items-center gap-2">
                       <ShieldCheck size={20} className="text-indigo-600" />

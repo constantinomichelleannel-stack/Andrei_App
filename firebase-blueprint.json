@@ -6,7 +6,6 @@
       "type": "object",
       "properties": {
         "uid": { "type": "string", "description": "Firebase Auth UID" },
-        "email": { "type": "string", "format": "email", "description": "Lawyer's email address" },
         "displayName": { "type": "string", "description": "Full name of the lawyer" },
         "rollNumber": { "type": "string", "description": "Supreme Court Roll of Attorneys number" },
         "specialization": { "type": "string", "description": "Primary legal specialization" },
@@ -15,7 +14,7 @@
         "consentDate": { "type": "string", "format": "date-time", "description": "When the consent was given" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Account creation timestamp" }
       },
-      "required": ["uid", "email", "displayName", "privacyConsent", "role"]
+      "required": ["uid", "displayName", "privacyConsent", "role"]
     }
   },
   "firestore": {

@@ -61,15 +61,26 @@ export interface JurisprudenceResult {
   }[];
 }
 
-export type ViewType = 'dashboard' | 'research' | 'knowledge' | 'library' | 'analytics' | 'summarizer' | 'settings' | 'jurisprudence' | 'workflows' | 'statutes' | 'admin';
+export type ViewType = 'dashboard' | 'research' | 'knowledge' | 'library' | 'analytics' | 'settings' | 'jurisprudence' | 'workflows' | 'statutes' | 'admin';
 
 export interface User {
   uid: string;
-  email: string;
   display_name: string;
   role: 'user' | 'admin';
   last_login: string;
   created_at: string;
+  account_verified?: number;
+}
+
+export interface UserProfile {
+  uid: string;
+  displayName: string;
+  rollNumber?: string;
+  specialization?: string;
+  privacyConsent: boolean;
+  role: 'user' | 'admin';
+  created_at: string;
+  accountVerified: boolean;
 }
 
 export interface ChatMessage {

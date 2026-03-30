@@ -5,14 +5,15 @@ const SESSION_TIMEOUT = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
 
 interface UserProfile {
   uid: string;
-  email: string;
   displayName: string;
   rollNumber?: string;
   specialization?: string;
-  role: 'lawyer' | 'admin';
+  role: 'user' | 'admin';
   privacyConsent: boolean;
   consentDate?: any;
   createdAt: any;
+  lastLoginAt?: any;
+  accountVerified: boolean;
 }
 
 interface AuthContextType {
@@ -88,6 +89,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
+        // Update last login in Firestore
+        const userRef = doc(db, 'users', currentUser.uid);
+        setDoc(userRef, { lastLoginAt: serverTimestamp() }, { merge: true }).catch(err => {
+          console.error("Failed to update last login:", err);
+        });
+
         // Handle session timeout
         const now = Date.now();
         const loginTimestamp = localStorage.getItem('lexph_login_timestamp');
@@ -135,7 +142,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
-  const isAdmin = profile?.role === 'admin' || user?.email === "constantinomichelleannel@gmail.com";
+  const isAdmin = profile?.role === 'admin';
 
   const getAuthToken = useCallback(async () => {
     if (!auth.currentUser) return null;

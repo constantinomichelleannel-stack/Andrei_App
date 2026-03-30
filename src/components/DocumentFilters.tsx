@@ -2,7 +2,7 @@ import React from 'react';
 import { 
   Search, X, Bookmark, History, Trash2, FileText, Calendar, 
   Database, Activity, Tag, Plus, User, BrainCircuit, Scale, 
-  ShieldAlert, ArrowUpDown, RotateCcw, CheckSquare, Square, Library, Share2
+  ShieldAlert, ArrowUpDown, RotateCcw, CheckSquare, Square, Library, Share2, Filter
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -120,134 +120,21 @@ export const DocumentFilters: React.FC<DocumentFiltersProps> = ({
           </button>
         </div>
 
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-          <input 
-            type="text" 
-            placeholder="Search by keywords, title, or tags..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm"
-          />
-          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-            {searchQuery && (
-              <button 
-                onClick={() => setSearchQuery('')}
-                className="p-1.5 text-slate-400 hover:text-slate-600 transition-colors"
-                aria-label="Clear search"
-              >
-                <X size={16} />
-              </button>
-            )}
-            <button 
-              onClick={() => setIsSavingSearch(true)}
-              className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
-              title="Save current search"
-            >
-              <Bookmark size={18} />
-            </button>
-            <div className="relative">
-              <button 
-                onClick={() => setShowSavedSearches(!showSavedSearches)}
-                className={`p-1.5 rounded-lg transition-all ${showSavedSearches ? 'text-indigo-600 bg-indigo-50' : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'}`}
-                title="View saved searches"
-              >
-                <History size={18} />
-              </button>
-              
-              <AnimatePresence>
-                {showSavedSearches && (
-                  <motion.div 
-                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                    className="absolute right-0 mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 overflow-hidden"
-                  >
-                    <div className="p-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Search History</span>
-                      <button onClick={() => setShowSavedSearches(false)} className="text-slate-400 hover:text-slate-600">
-                        <X size={14} />
-                      </button>
-                    </div>
-                    <div className="max-h-80 overflow-y-auto">
-                      {savedSearches.length > 0 && (
-                        <div className="p-2 bg-slate-50/50 border-b border-slate-100">
-                          <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Pinned & Saved</span>
-                        </div>
-                      )}
-                      {savedSearches.map(search => (
-                        <div 
-                          key={search.id}
-                          className="group p-3 border-b border-slate-50 hover:bg-indigo-50/50 transition-colors flex items-center justify-between"
-                        >
-                          <button 
-                            onClick={() => {
-                              applySavedSearch(search);
-                              setShowSavedSearches(false);
-                            }}
-                            className="flex-1 text-left"
-                          >
-                            <p className="text-xs font-bold text-slate-900 truncate">{search.name}</p>
-                            <p className="text-[10px] text-slate-400 truncate">
-                              {search.query || 'No query'} • {search.filter}
-                            </p>
-                          </button>
-                          <button 
-                            onClick={() => removeSavedSearch(search.id)}
-                            className="p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                      ))}
-
-                      {recentSearches.length > 0 && (
-                        <>
-                          <div className="p-2 bg-slate-50/50 border-b border-slate-100 flex justify-between items-center">
-                            <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Recent Searches</span>
-                            <button 
-                              onClick={clearRecentSearches}
-                              className="text-[9px] text-slate-400 hover:text-red-500 font-bold"
-                            >
-                              Clear
-                            </button>
-                          </div>
-                          {recentSearches.map(search => (
-                            <div 
-                              key={search.id}
-                              className="group p-3 border-b border-slate-50 hover:bg-slate-50 transition-colors flex items-center justify-between"
-                            >
-                              <button 
-                                onClick={() => {
-                                  applySavedSearch({ ...search.filters, query: search.query });
-                                  setShowSavedSearches(false);
-                                }}
-                                className="flex-1 text-left"
-                              >
-                                <p className="text-xs font-medium text-slate-700 truncate">{search.query}</p>
-                                <p className="text-[9px] text-slate-400 truncate">
-                                  {new Date(search.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                </p>
-                              </button>
-                            </div>
-                          ))}
-                        </>
-                      )}
-
-                      {savedSearches.length === 0 && recentSearches.length === 0 && (
-                        <div className="p-6 text-center text-xs text-slate-400 italic">
-                          No saved or recent searches yet.
-                        </div>
-                      )}
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
+        <div className="flex-1 flex items-center justify-end gap-3">
+          <div className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-700 rounded-xl border border-indigo-100">
+            <Filter size={14} />
+            <span className="text-xs font-bold uppercase tracking-wider">Advanced Filters</span>
           </div>
+          <button 
+            onClick={resetFilters}
+            className="flex items-center gap-2 px-4 py-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-all text-xs font-bold"
+          >
+            <RotateCcw size={14} /> Reset All
+          </button>
         </div>
-        
-        <div className="flex flex-wrap items-center gap-3">
+      </div>
+      
+      <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <FileText size={14} className="text-slate-400" />
             <span className="text-[10px] font-mono text-slate-400 uppercase">Case Type:</span>
@@ -549,7 +436,6 @@ export const DocumentFilters: React.FC<DocumentFiltersProps> = ({
             <RotateCcw size={12} /> Reset
           </button>
         </div>
-      </div>
 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div className="flex items-center gap-4">
