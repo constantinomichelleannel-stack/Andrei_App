@@ -46,6 +46,8 @@ export interface LegalDocument {
   citation_analysis?: string;
   version?: number;
   versions?: DocumentVersion[];
+  uid?: string;
+  is_public?: boolean;
 }
 
 export interface JurisprudenceResult {
